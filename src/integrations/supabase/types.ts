@@ -285,6 +285,7 @@ export type Database = {
           broker_id: string | null
           code: string
           condominium_fee: number | null
+          cover_image_url: string | null
           created_at: string
           description: string | null
           id: string
@@ -319,6 +320,7 @@ export type Database = {
           broker_id?: string | null
           code: string
           condominium_fee?: number | null
+          cover_image_url?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -353,6 +355,7 @@ export type Database = {
           broker_id?: string | null
           code?: string
           condominium_fee?: number | null
+          cover_image_url?: string | null
           created_at?: string
           description?: string | null
           id?: string
