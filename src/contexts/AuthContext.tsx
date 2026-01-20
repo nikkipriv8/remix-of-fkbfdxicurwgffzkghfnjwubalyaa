@@ -34,14 +34,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
+    // Ensure backend rows exist (profiles + user_roles) before fetching
+    try {
+      await supabase.functions.invoke('ensure-profile');
+    } catch {
+      // ignore; we'll still try to fetch below
+    }
+
     // Fetch profile data
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
-    if (profileError) {
+    if (profileError || !profileData) {
       return null;
     }
 
