@@ -15,6 +15,8 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const DEFAULT_TIMEZONE = "America/Sao_Paulo";
+
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
@@ -48,6 +50,113 @@ const SYSTEM_PROMPT = `Você é a assistente virtual de uma imobiliária moderna
 6. Prazo para mudança
 
 Responda sempre em português brasileiro de forma natural e amigável.`;
+
+async function pickActiveStaffProfileId(): Promise<string | null> {
+  // Prefer brokers; fallback to admins.
+  const rolePriority: Array<"broker" | "admin"> = ["broker", "admin"];
+
+  for (const role of rolePriority) {
+    const { data: roleRow, error: roleErr } = await supabase
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", role)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (roleErr) {
+      console.warn("[AI Agent] pickActiveStaffProfileId role query error", roleErr);
+      continue;
+    }
+
+    const userId = (roleRow as any)?.user_id as string | undefined;
+    if (!userId) continue;
+
+    const { data: profileRow, error: profileErr } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (profileErr) {
+      console.warn("[AI Agent] pickActiveStaffProfileId profile query error", profileErr);
+      continue;
+    }
+
+    const profileId = (profileRow as any)?.id as string | undefined;
+    if (profileId) return profileId;
+  }
+
+  return null;
+}
+
+async function getOrAssignBrokerId(leadId: string): Promise<string | null> {
+  const { data: leadRow, error: leadErr } = await supabase
+    .from("leads")
+    .select("broker_id")
+    .eq("id", leadId)
+    .maybeSingle();
+
+  if (leadErr) {
+    console.warn("[AI Agent] getOrAssignBrokerId lead query error", leadErr);
+    return null;
+  }
+
+  const existing = (leadRow as any)?.broker_id as string | null | undefined;
+  if (existing) return existing;
+
+  const picked = await pickActiveStaffProfileId();
+  if (!picked) return null;
+
+  const { error: updErr } = await supabase
+    .from("leads")
+    .update({ broker_id: picked })
+    .eq("id", leadId)
+    .is("broker_id", null);
+
+  if (updErr) {
+    console.warn("[AI Agent] getOrAssignBrokerId update error", updErr);
+    return null;
+  }
+
+  return picked;
+}
+
+async function resolvePropertyId(args: any): Promise<string | null> {
+  const rawId = String(args?.property_id || "").trim();
+  if (rawId && uuidRe.test(rawId)) {
+    const { data, error } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("id", rawId)
+      .eq("status", "available")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[AI Agent] resolvePropertyId by id error", error);
+      return null;
+    }
+    return (data as any)?.id ?? null;
+  }
+
+  const code = String(args?.property_code || "").trim();
+  if (!code) return null;
+
+  const { data, error } = await supabase
+    .from("properties")
+    .select("id")
+    .eq("code", code)
+    .eq("status", "available")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[AI Agent] resolvePropertyId by code error", error);
+    return null;
+  }
+
+  return (data as any)?.id ?? null;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -241,14 +350,14 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
               timezone: {
                 type: "string",
                 description:
-                  "Fuso horário informado pelo cliente. Se não estiver claro, PERGUNTE antes (ex: 'Horário de Brasília / America/Sao_Paulo').",
+                  "Fuso horário do cliente (ex: 'Horário de Brasília' / 'America/Sao_Paulo'). Se não for informado, assuma Horário de Brasília.",
               },
               notes: {
                 type: "string",
                 description: "Observações opcionais do cliente (ex: 'prefere tarde').",
               },
             },
-            required: ["scheduled_at_iso", "timezone"],
+            required: ["scheduled_at_iso"],
           },
         },
       },
@@ -310,6 +419,10 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
           args = {};
         }
 
+        console.log(
+          `[AI Agent] schedule_visit called (conversation=${conversationId}) args_keys=${Object.keys(args || {}).join(",")}`
+        );
+
         // Fetch conversation + lead
         const { data: convRow } = await supabase
           .from("whatsapp_conversations")
@@ -322,19 +435,12 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
           aiMessage =
             "Consigo sim! Antes, preciso vincular este WhatsApp a um lead aqui no sistema. Um corretor vai assumir a conversa e eu já registro a visita.";
         } else {
-          const { data: leadRow } = await supabase
-            .from("leads")
-            .select("broker_id")
-            .eq("id", leadId)
-            .maybeSingle();
+          console.log(`[AI Agent] schedule_visit lead_id=${leadId}`);
 
-          const brokerId = (leadRow as any)?.broker_id as string | null;
+          const brokerId = await getOrAssignBrokerId(leadId);
           if (!brokerId) {
             aiMessage =
-              "Perfeito! Para eu registrar a visita, preciso que um corretor assuma este atendimento na plataforma. Pode aguardar um instante?";
-          } else if (!args?.timezone) {
-            aiMessage =
-              "Claro! Só me diga em qual fuso horário devo considerar (ex: Horário de Brasília) para eu registrar certinho.";
+              "Perfeito! Vou pedir para um corretor confirmar o agendamento com você por aqui e já registrar a visita no sistema.";
           } else {
             const scheduledIso = String(args?.scheduled_at_iso || "");
             const scheduledAt = new Date(scheduledIso);
@@ -342,25 +448,20 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
               aiMessage =
                 "Para eu registrar a visita, me confirme a data e a hora em um formato claro (ex: 20/01 às 14:00) e o fuso horário.";
             } else {
-              // Resolve property_id
-              let propertyId = String(args?.property_id || "");
-              const propertyCode = String(args?.property_code || "").trim();
-
-              if (!propertyId && propertyCode) {
-                const match = (props || []).find((p: any) => String(p.code).trim() === propertyCode);
-                if (match?.id) propertyId = String(match.id);
-              }
-
-              if (propertyId && !uuidRe.test(propertyId)) {
-                propertyId = "";
-              }
-
-              if (!propertyId) {
+              const now = Date.now();
+              if (scheduledAt.getTime() < now - 5 * 60 * 1000) {
                 aiMessage =
-                  "Qual o código do imóvel que você quer visitar? Assim que você me disser (ex: 'código 123'), eu registro o rascunho da visita.";
+                  "Esse horário parece estar no passado 😅 Pode me sugerir uma nova data e hora (ex: amanhã às 14:00)?";
               } else {
+                // Resolve property_id (prefer DB lookup; do not rely only on the 5-context list)
+                const propertyId = await resolvePropertyId(args);
+
+                if (!propertyId) {
+                  aiMessage =
+                    "Qual o *código do imóvel* que você quer visitar? Assim que você me disser (ex: 'código 123'), eu registro a visita.";
+                } else {
                 const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
-                const tz = String(args.timezone).trim();
+                const tz = String(args?.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
 
                 const { error: visitErr } = await supabase.from("visits").insert({
                   lead_id: leadId,
@@ -370,7 +471,7 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                   status: "scheduled",
                   notes: [
                     "Rascunho criado pela IA (WhatsApp)",
-                    `Fuso informado: ${tz}`,
+                    `Fuso: ${tz}`,
                     notes ? `Obs: ${notes}` : null,
                   ]
                     .filter(Boolean)
@@ -382,8 +483,12 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                   aiMessage =
                     "Tive um problema ao registrar a visita agora. Um corretor vai te atender por aqui e confirmar o agendamento.";
                 } else {
+                  console.log(
+                    `[AI Agent] schedule_visit inserted lead=${leadId} broker=${brokerId} property=${propertyId} at=${scheduledAt.toISOString()}`
+                  );
                   aiMessage =
                     "Perfeito! Registrei um *rascunho* de visita no sistema. Um corretor vai confirmar a data/horário com você por aqui 😉";
+                }
                 }
               }
             }

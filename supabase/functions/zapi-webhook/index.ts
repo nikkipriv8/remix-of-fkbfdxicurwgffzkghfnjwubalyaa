@@ -253,7 +253,34 @@ async function handleIncomingMessage(payload: any) {
 
   // Check if we should create/update a lead and trigger AI response
   if (!fromMe && !isGroup) {
-    await findOrCreateLead(cleanPhone, safeChatName);
+    const lead = await findOrCreateLead(cleanPhone, safeChatName);
+
+    // Ensure conversation is linked to the lead so the AI agent can schedule visits.
+    const leadId = (lead as any)?.id as string | undefined;
+    if (leadId) {
+      try {
+        const { error: linkErr } = await supabase
+          .from("whatsapp_conversations")
+          .update({ lead_id: leadId })
+          .eq("id", conversation.id)
+          .is("lead_id", null);
+
+        if (linkErr) {
+          console.warn("[Z-API] Could not link conversation to lead", linkErr);
+        } else {
+          console.log(`[Z-API] Linked conversation ${conversation.id} to lead ${leadId}`);
+        }
+
+        // Best-effort: keep lead.whatsapp_id populated (helps cross-linking)
+        await supabase
+          .from("leads")
+          .update({ whatsapp_id: whatsappId })
+          .eq("id", leadId)
+          .or("whatsapp_id.is.null,whatsapp_id.eq.");
+      } catch (e) {
+        console.warn("[Z-API] Link lead/conversation best-effort failed", e);
+      }
+    }
 
     // Only trigger AI agent if automation is enabled for this conversation
     if (conversation.automation_enabled !== false) {
