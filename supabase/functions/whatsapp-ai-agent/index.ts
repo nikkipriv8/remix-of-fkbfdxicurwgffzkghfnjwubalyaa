@@ -17,6 +17,111 @@ const uuidRe =
 
 const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
+function normalizeText(input: string) {
+  return input
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+}
+
+function parseYesNo(input: string): "yes" | "no" | null {
+  const t = normalizeText(input);
+  if (!t) return null;
+
+  if (/^(sim|s|confirmo|confirmar|ok|okay|pode|pode sim|isso|isso mesmo)\b/.test(t)) return "yes";
+  if (/^(nao|não|n|negativo|nao quero|não quero|remarcar|reagendar|cancelar)\b/.test(t)) return "no";
+  return null;
+}
+
+function parseCandidateChoice(input: string): { index?: number; code?: string } | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  const mNum = raw.match(/^\s*([1-3])\s*$/);
+  if (mNum) return { index: Number(mNum[1]) - 1 };
+
+  const mCode = raw.match(/\b(IMV-[A-Z0-9]+)\b/i);
+  if (mCode) return { code: mCode[1].toUpperCase() };
+  return null;
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Parses PT-BR date/time like:
+ * - "dia 24 as 17h"
+ * - "24/01 17:00"
+ * - "24 17h"
+ * Assumes America/Sao_Paulo (-03:00) when no timezone is given.
+ */
+function parsePtBrDateTimeToIso(
+  input: string,
+  now = new Date(),
+  tzOffset = "-03:00"
+): { iso: string; reason?: string } | null {
+  const t = normalizeText(input);
+  if (!t) return null;
+
+  // Reject if no time present
+  const timeMatch = t.match(/\b(\d{1,2})\s*(?:h|:)(\d{2})?\b/);
+  if (!timeMatch) return null;
+
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2] ?? "0");
+  if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return { iso: "", reason: "invalid_time" };
+  }
+
+  // Date patterns: dd/mm[/yyyy] or "dia dd" or just dd
+  const dmy = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  const diaDd = t.match(/\bdia\s+(\d{1,2})\b/);
+  const bareDd = !dmy && !diaDd ? t.match(/\b(\d{1,2})\b/) : null;
+
+  let day: number | null = null;
+  let month: number | null = null;
+  let year: number | null = null;
+
+  if (dmy) {
+    day = Number(dmy[1]);
+    month = Number(dmy[2]);
+    year = dmy[3] ? Number(dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3]) : now.getFullYear();
+  } else if (diaDd) {
+    day = Number(diaDd[1]);
+  } else if (bareDd) {
+    day = Number(bareDd[1]);
+  }
+
+  if (!day || day < 1 || day > 31) return null;
+
+  const baseYear = now.getFullYear();
+  const baseMonth = now.getMonth() + 1;
+
+  if (!month) {
+    // Choose next occurrence of that day (this month if still ahead, otherwise next month)
+    year = baseYear;
+    month = baseMonth;
+    const candidate = new Date(`${baseYear}-${pad2(baseMonth)}-${pad2(day)}T${pad2(hour)}:${pad2(minute)}:00${tzOffset}`);
+    if (Number.isNaN(candidate.getTime())) return { iso: "", reason: "invalid_date" };
+    if (candidate.getTime() < now.getTime()) {
+      // move to next month
+      const next = new Date(candidate);
+      next.setMonth(next.getMonth() + 1);
+      year = next.getFullYear();
+      month = next.getMonth() + 1;
+    }
+  }
+
+  year = year ?? baseYear;
+  if (!month || month < 1 || month > 12) return { iso: "", reason: "invalid_date" };
+
+  const iso = `${year}-${pad2(month)}-${pad2(day)}T${pad2(hour)}:${pad2(minute)}:00${tzOffset}`;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return { iso: "", reason: "invalid_date" };
+  return { iso };
+}
+
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
@@ -40,6 +145,10 @@ const SYSTEM_PROMPT = `Você é a assistente virtual de uma imobiliária moderna
 - Mantenha respostas concisas e objetivas (máximo 3-4 frases por mensagem)
 - Use emojis com moderação para tornar a conversa mais amigável
 - Se não souber algo, diga que vai verificar com a equipe e retorna
+
+**Regra de fluxo (agendamento):**
+- Se o cliente já informou *data/hora* e em seguida informar *endereço/código do imóvel*, seu objetivo principal é *finalizar o agendamento* e pedir confirmação *SIM/NÃO*.
+- Evite desviar para oferta de venda/compra enquanto o agendamento estiver em andamento.
 
 **Informações que você deve coletar:**
 1. Tipo de transação desejada (compra, aluguel ou venda)
@@ -308,6 +417,335 @@ Deno.serve(async (req) => {
     // minimal log only
     console.log(`[AI Agent] processing conversation=${conversationId}`);
 
+    // Load conversation state early (for deterministic scheduling flow)
+    const { data: convState, error: convStateErr } = await supabase
+      .from("whatsapp_conversations")
+      .select(
+        "lead_id, pending_visit_id, pending_visit_property_id, pending_visit_scheduled_at, pending_visit_step, pending_visit_candidates"
+      )
+      .eq("id", conversationId)
+      .maybeSingle();
+
+    if (convStateErr) {
+      console.warn("[AI Agent] Could not load conversation state", convStateErr);
+    }
+
+    const leadIdState = (convState as any)?.lead_id as string | null | undefined;
+    const pendingVisitId = (convState as any)?.pending_visit_id as string | null | undefined;
+    const pendingPropertyId = (convState as any)?.pending_visit_property_id as string | null | undefined;
+    const pendingScheduledAt = (convState as any)?.pending_visit_scheduled_at as string | null | undefined;
+    const pendingStep = (convState as any)?.pending_visit_step as string | null | undefined;
+    const pendingCandidates = (convState as any)?.pending_visit_candidates as any[] | null | undefined;
+
+    // 1) Handle confirmation (SIM/NÃO) without calling the model
+    if (pendingStep === "awaiting_confirmation" && pendingVisitId) {
+      const yn = parseYesNo(message);
+      if (yn) {
+        if (yn === "yes") {
+          const { error: updVisitErr } = await supabase
+            .from("visits")
+            .update({ status: "confirmed" })
+            .eq("id", pendingVisitId);
+
+          if (updVisitErr) {
+            console.error("[AI Agent] confirm visit update error", updVisitErr);
+          }
+
+          await supabase
+            .from("whatsapp_conversations")
+            .update({
+              pending_visit_id: null,
+              pending_visit_property_id: null,
+              pending_visit_scheduled_at: null,
+              pending_visit_step: null,
+              pending_visit_candidates: null,
+              last_message_at: new Date().toISOString(),
+            })
+            .eq("id", conversationId);
+
+          const confirmMsg =
+            "Perfeito! Visita *confirmada* ✅\n\nSe quiser, me diga seu nome completo e um ponto de referência para facilitar o encontro.";
+
+          // Send via Z-API
+          const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
+          const ZAPI_TOKEN = Deno.env.get("ZAPI_TOKEN")!;
+          const ZAPI_SECURITY_TOKEN = Deno.env.get("ZAPI_SECURITY_TOKEN") || "";
+
+          await fetch(
+            `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Client-Token": ZAPI_SECURITY_TOKEN,
+              },
+              body: JSON.stringify({ phone: cleanPhone, message: confirmMsg }),
+            }
+          );
+
+          await supabase.from("whatsapp_messages").insert({
+            conversation_id: conversationId,
+            content: confirmMsg,
+            direction: "outbound",
+            status: "sent",
+            ai_processed: true,
+            ai_response: { model: "deterministic", tool_calls: [] },
+          } as any);
+
+          return json(200, { success: true, message: confirmMsg });
+        }
+
+        // yn === "no"
+        await supabase
+          .from("visits")
+          .update({ status: "rescheduled" })
+          .eq("id", pendingVisitId);
+
+        await supabase
+          .from("whatsapp_conversations")
+          .update({
+            pending_visit_step: "awaiting_datetime",
+            pending_visit_scheduled_at: null,
+            last_message_at: new Date().toISOString(),
+          })
+          .eq("id", conversationId);
+
+        const rescheduleMsg =
+          "Sem problemas 🙂 Qual nova *data e horário* você prefere? (ex: 24/01 às 17h)";
+
+        const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
+        const ZAPI_TOKEN = Deno.env.get("ZAPI_TOKEN")!;
+        const ZAPI_SECURITY_TOKEN = Deno.env.get("ZAPI_SECURITY_TOKEN") || "";
+
+        await fetch(
+          `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Client-Token": ZAPI_SECURITY_TOKEN,
+            },
+            body: JSON.stringify({ phone: cleanPhone, message: rescheduleMsg }),
+          }
+        );
+
+        await supabase.from("whatsapp_messages").insert({
+          conversation_id: conversationId,
+          content: rescheduleMsg,
+          direction: "outbound",
+          status: "sent",
+          ai_processed: true,
+          ai_response: { model: "deterministic", tool_calls: [] },
+        } as any);
+
+        return json(200, { success: true, message: rescheduleMsg });
+      }
+    }
+
+    // 2) If user must choose between candidates (1/2/3 or code)
+    if (pendingStep === "awaiting_candidate_choice" && Array.isArray(pendingCandidates) && pendingCandidates.length) {
+      const choice = parseCandidateChoice(message);
+      if (choice) {
+        let chosen: any | null = null;
+        if (typeof choice.index === "number") {
+          chosen = pendingCandidates[choice.index] ?? null;
+        } else if (choice.code) {
+          chosen = pendingCandidates.find((c) => String(c?.code || "").toUpperCase() === choice.code) ?? null;
+        }
+
+        if (chosen?.id) {
+          await supabase
+            .from("whatsapp_conversations")
+            .update({
+              pending_visit_property_id: chosen.id,
+              pending_visit_candidates: null,
+              pending_visit_step: pendingScheduledAt ? "awaiting_confirmation" : "awaiting_datetime",
+              last_message_at: new Date().toISOString(),
+            })
+            .eq("id", conversationId);
+        }
+      }
+    }
+
+    // 3) Deterministic scheduling capture: try to extract date/time and property from the current message
+    //    so we don't rely on the model to call schedule_visit.
+    let nextPropertyId: string | null = pendingPropertyId ?? null;
+    let nextScheduledIso: string | null = pendingScheduledAt ? new Date(pendingScheduledAt).toISOString() : null;
+
+    // Date/time capture (assume Brasília)
+    const parsedDt = parsePtBrDateTimeToIso(message, new Date(), "-03:00");
+    if (parsedDt?.iso) {
+      const dt = new Date(parsedDt.iso);
+      if (!Number.isNaN(dt.getTime())) {
+        nextScheduledIso = parsedDt.iso;
+      }
+    }
+
+    // Property capture: code first, then address search
+    const codeMatch = message.match(/\b(IMV-[A-Z0-9]+)\b/i);
+    if (!nextPropertyId && codeMatch) {
+      nextPropertyId = await resolvePropertyId({ property_code: codeMatch[1].toUpperCase() });
+    }
+    if (!nextPropertyId && !codeMatch) {
+      // Heuristic: treat as address only if it has letters and numbers (avoid triggering on "sim", "ok", etc.)
+      const hasLetters = /[a-zA-ZÀ-ÿ]/.test(message);
+      const hasDigits = /\d/.test(message);
+      if (hasLetters && hasDigits && message.trim().length >= 8) {
+        const resolved = await resolvePropertyByAddress(message);
+        if (resolved.id) {
+          nextPropertyId = resolved.id;
+        } else if (resolved.candidates?.length) {
+          const list = resolved.candidates
+            .slice(0, 3)
+            .map((c, idx) => {
+              const addrLine = `${c.address_street || ""} ${c.address_number || ""}, ${c.address_neighborhood} - ${c.address_city}/${c.address_state}`
+                .replace(/\s+/g, " ")
+                .trim();
+              return `${idx + 1}) ${c.title} (código ${c.code}) — ${addrLine}`;
+            })
+            .join("\n");
+
+          await supabase
+            .from("whatsapp_conversations")
+            .update({
+              pending_visit_candidates: resolved.candidates as any,
+              pending_visit_step: "awaiting_candidate_choice",
+              last_message_at: new Date().toISOString(),
+            })
+            .eq("id", conversationId);
+
+          const pickMsg =
+            `Encontrei mais de um imóvel com esse endereço/descrição. Qual deles é o certo?\n\n${list}\n\nResponda com o *número* (1, 2, 3) ou com o *código* do imóvel.`;
+
+          const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
+          const ZAPI_TOKEN = Deno.env.get("ZAPI_TOKEN")!;
+          const ZAPI_SECURITY_TOKEN = Deno.env.get("ZAPI_SECURITY_TOKEN") || "";
+
+          await fetch(
+            `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Client-Token": ZAPI_SECURITY_TOKEN,
+              },
+              body: JSON.stringify({ phone: cleanPhone, message: pickMsg }),
+            }
+          );
+
+          await supabase.from("whatsapp_messages").insert({
+            conversation_id: conversationId,
+            content: pickMsg,
+            direction: "outbound",
+            status: "sent",
+            ai_processed: true,
+            ai_response: { model: "deterministic", tool_calls: [] },
+          } as any);
+
+          return json(200, { success: true, message: pickMsg });
+        }
+      }
+    }
+
+    // Persist captured state (best-effort)
+    if (nextPropertyId !== (pendingPropertyId ?? null) || (parsedDt?.iso && nextScheduledIso !== null)) {
+      await supabase
+        .from("whatsapp_conversations")
+        .update({
+          pending_visit_property_id: nextPropertyId,
+          pending_visit_scheduled_at: nextScheduledIso ? new Date(nextScheduledIso).toISOString() : null,
+          pending_visit_step: nextPropertyId
+            ? nextScheduledIso
+              ? "awaiting_confirmation"
+              : "awaiting_datetime"
+            : nextScheduledIso
+              ? "awaiting_property"
+              : pendingStep,
+          last_message_at: new Date().toISOString(),
+        })
+        .eq("id", conversationId);
+    }
+
+    // If we already have both pieces, create (or keep) a draft visit and ask for SIM/NÃO
+    if (!pendingVisitId && leadIdState && nextPropertyId && nextScheduledIso) {
+      const scheduledAt = new Date(nextScheduledIso);
+      const now = Date.now();
+      if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() < now - 5 * 60 * 1000) {
+        await supabase
+          .from("whatsapp_conversations")
+          .update({ pending_visit_scheduled_at: null, pending_visit_step: "awaiting_datetime" })
+          .eq("id", conversationId);
+      } else {
+        const brokerId = await getOrAssignBrokerId(leadIdState);
+        const { data: visitRow, error: visitErr } = await supabase
+          .from("visits")
+          .insert({
+            lead_id: leadIdState,
+            property_id: nextPropertyId,
+            broker_id: brokerId,
+            scheduled_at: scheduledAt.toISOString(),
+            status: "scheduled",
+            notes: `Rascunho criado pela IA (WhatsApp) | Fuso: ${DEFAULT_TIMEZONE}`,
+          } as any)
+          .select("id")
+          .maybeSingle();
+
+        if (!visitErr && (visitRow as any)?.id) {
+          await supabase
+            .from("whatsapp_conversations")
+            .update({
+              pending_visit_id: (visitRow as any).id,
+              pending_visit_step: "awaiting_confirmation",
+              last_message_at: new Date().toISOString(),
+            })
+            .eq("id", conversationId);
+
+          const { data: propRow } = await supabase
+            .from("properties")
+            .select(
+              "code, title, address_street, address_number, address_neighborhood, address_city, address_state"
+            )
+            .eq("id", nextPropertyId)
+            .maybeSingle();
+
+          const p: any = propRow || {};
+          const pAddr = `${p.address_street || ""} ${p.address_number || ""}, ${p.address_neighborhood || ""} - ${p.address_city || ""}/${p.address_state || ""}`
+            .replace(/\s+/g, " ")
+            .trim();
+
+          const confirmMsg =
+            `Agendamento registrado como *rascunho* ✅\n\nImóvel: ${p.title || "(sem título)"} (código ${p.code || "-"})\nEndereço: ${pAddr || "-"}\nData/hora: ${nextScheduledIso}\n\nVocê confirma esse agendamento? Responda *SIM* para confirmar ou *NÃO* para remarcar.`;
+
+          const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
+          const ZAPI_TOKEN = Deno.env.get("ZAPI_TOKEN")!;
+          const ZAPI_SECURITY_TOKEN = Deno.env.get("ZAPI_SECURITY_TOKEN") || "";
+
+          await fetch(
+            `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Client-Token": ZAPI_SECURITY_TOKEN,
+              },
+              body: JSON.stringify({ phone: cleanPhone, message: confirmMsg }),
+            }
+          );
+
+          await supabase.from("whatsapp_messages").insert({
+            conversation_id: conversationId,
+            content: confirmMsg,
+            direction: "outbound",
+            status: "sent",
+            ai_processed: true,
+            ai_response: { model: "deterministic", tool_calls: [] },
+          } as any);
+
+          return json(200, { success: true, message: confirmMsg });
+        }
+      }
+    }
+
     // Get conversation history for context
     const { data: messages, error: msgError } = await supabase
       .from("whatsapp_messages")
@@ -387,7 +825,7 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
         function: {
           name: "schedule_visit",
           description:
-            "Cria um rascunho de visita (status scheduled) para um lead e imóvel. Use SOMENTE quando o cliente informar data, hora e fuso horário.",
+            "Cria um rascunho de visita (status scheduled) para um lead e imóvel.",
           parameters: {
             type: "object",
             properties: {
@@ -409,6 +847,11 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                 description:
                   "Data/hora em ISO-8601 com offset (ex: 2026-01-20T14:00:00-03:00).",
               },
+              scheduled_at_text: {
+                type: "string",
+                description:
+                  "Data/hora em texto (ex: 'dia 24 às 17h'). Se informado, o backend converte para ISO assumindo Horário de Brasília.",
+              },
               timezone: {
                 type: "string",
                 description:
@@ -419,7 +862,7 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                 description: "Observações opcionais do cliente (ex: 'prefere tarde').",
               },
             },
-            required: ["scheduled_at_iso"],
+            required: [],
           },
         },
       },
@@ -504,11 +947,17 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
             aiMessage =
               "Perfeito! Vou pedir para um corretor confirmar o agendamento com você por aqui e já registrar a visita no sistema.";
           } else {
-            const scheduledIso = String(args?.scheduled_at_iso || "");
+            let scheduledIso = String(args?.scheduled_at_iso || "").trim();
+            if (!scheduledIso) {
+              const scheduledText = typeof args?.scheduled_at_text === "string" ? args.scheduled_at_text : "";
+              const parsed = parsePtBrDateTimeToIso(scheduledText, new Date(), "-03:00");
+              if (parsed?.iso) scheduledIso = parsed.iso;
+            }
+
             const scheduledAt = new Date(scheduledIso);
             if (!scheduledIso || Number.isNaN(scheduledAt.getTime())) {
               aiMessage =
-                "Para eu registrar a visita, me confirme a data e a hora em um formato claro (ex: 20/01 às 14:00) e o fuso horário.";
+                "Para eu registrar a visita, me confirme a data e a hora (ex: 'dia 24 às 17h' ou '24/01 às 17:00').";
             } else {
               const now = Date.now();
               if (scheduledAt.getTime() < now - 5 * 60 * 1000) {
@@ -551,8 +1000,8 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                       "Consigo agendar sim — mas preciso identificar o imóvel certinho. Pode me enviar o *endereço completo* (rua, número, bairro e cidade)? Se souber, mande também o *código do imóvel*.";
                   }
                 } else {
-                const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
-                const tz = String(args?.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
+                 const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
+                 const tz = String(args?.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
 
                 const { error: visitErr } = await supabase.from("visits").insert({
                   lead_id: leadId,

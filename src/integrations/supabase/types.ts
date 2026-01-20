@@ -788,6 +788,11 @@ export type Database = {
           is_active: boolean
           last_message_at: string | null
           lead_id: string | null
+          pending_visit_candidates: Json | null
+          pending_visit_id: string | null
+          pending_visit_property_id: string | null
+          pending_visit_scheduled_at: string | null
+          pending_visit_step: string | null
           phone: string
           updated_at: string
           whatsapp_id: string
@@ -801,6 +806,11 @@ export type Database = {
           is_active?: boolean
           last_message_at?: string | null
           lead_id?: string | null
+          pending_visit_candidates?: Json | null
+          pending_visit_id?: string | null
+          pending_visit_property_id?: string | null
+          pending_visit_scheduled_at?: string | null
+          pending_visit_step?: string | null
           phone: string
           updated_at?: string
           whatsapp_id: string
@@ -814,6 +824,11 @@ export type Database = {
           is_active?: boolean
           last_message_at?: string | null
           lead_id?: string | null
+          pending_visit_candidates?: Json | null
+          pending_visit_id?: string | null
+          pending_visit_property_id?: string | null
+          pending_visit_scheduled_at?: string | null
+          pending_visit_step?: string | null
           phone?: string
           updated_at?: string
           whatsapp_id?: string
