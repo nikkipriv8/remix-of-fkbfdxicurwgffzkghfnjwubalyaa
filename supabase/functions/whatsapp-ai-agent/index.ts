@@ -44,8 +44,101 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // --- AuthZ (critical): only allow service role calls (internal) OR authenticated staff users ---
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearerServiceKey = `Bearer ${supabaseServiceKey}`;
+  const isServiceRoleCall = authHeader === bearerServiceKey || authHeader === supabaseServiceKey;
+
+  if (!isServiceRoleCall) {
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!anonKey) {
+      console.error("[AI Agent] Missing SUPABASE_ANON_KEY");
+      return new Response(JSON.stringify({ error: "Server misconfigured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseAuth = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: userRes, error: authError } = await supabaseAuth.auth.getUser();
+    const caller = userRes?.user;
+
+    if (authError || !caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Require staff role (admin/broker/attendant)
+    const { data: roleRow, error: roleError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", caller.id)
+      .in("role", ["admin", "broker", "attendant"])
+      .maybeSingle();
+
+    if (roleError || !roleRow) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Optional: block deactivated accounts
+    const { data: activeRow } = await supabase
+      .from("profiles")
+      .select("is_active")
+      .eq("user_id", caller.id)
+      .maybeSingle();
+
+    if (activeRow?.is_active === false) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   try {
-    const { conversationId, message, phone } = await req.json();
+    const payload = await req.json();
+    const conversationId = String(payload?.conversationId ?? "");
+    const message = typeof payload?.message === "string" ? payload.message : "";
+    const phone = typeof payload?.phone === "string" ? payload.phone : "";
+
+    const uuidRe =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(conversationId)) {
+      return new Response(JSON.stringify({ error: "Invalid conversationId" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      return new Response(JSON.stringify({ error: "Invalid phone" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!message || message.length > 2000) {
+      return new Response(JSON.stringify({ error: "Invalid message" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // minimal log only
     console.log(`[AI Agent] processing conversation=${conversationId}`);
@@ -64,13 +157,14 @@ Deno.serve(async (req) => {
     }
 
     // Build conversation history for AI
-    const conversationHistory = messages?.map((msg) => ({
-      role: msg.direction === "inbound" ? "user" : "assistant",
-      content: msg.content || "",
-    })) || [];
+    const conversationHistory =
+      messages?.map((msg) => ({
+        role: msg.direction === "inbound" ? "user" : "assistant",
+        content: msg.content || "",
+      })) || [];
 
     // If the current message isn't in history yet, add it
-    if (message && !conversationHistory.some(m => m.content === message)) {
+    if (message && !conversationHistory.some((m) => m.content === message)) {
       conversationHistory.push({ role: "user", content: message });
     }
 
@@ -132,7 +226,7 @@ Deno.serve(async (req) => {
           "Client-Token": ZAPI_SECURITY_TOKEN,
         },
         body: JSON.stringify({
-          phone,
+          phone: cleanPhone,
           message: aiMessage,
         }),
       }
