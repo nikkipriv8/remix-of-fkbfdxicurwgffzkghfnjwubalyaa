@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -27,9 +27,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { PropertyImageUploader } from "@/components/properties/PropertyImageUploader";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { Tables } from "@/integrations/supabase/types";
+
 
 type Property = Tables<"properties">;
 
@@ -166,6 +168,18 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
         : "",
     },
   });
+
+  const codeValue = form.watch("code");
+  const coverUrl = form.watch("cover_image_url");
+  const imagesFromText = useMemo(() => {
+    const txt = form.getValues("images_text") || "";
+    return txt
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.watch("images_text")]);
+
 
   async function onSubmit(values: FormValues) {
     setIsLoading(true);
@@ -598,34 +612,55 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
             />
 
             <div className="space-y-4">
-              <FormField
-                control={form.control}
-                name="cover_image_url"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>URL da Capa (imagem principal) *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="https://..." {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+              {/* Hidden fields kept for validation + DB */}
+              <div className="hidden">
+                <FormField
+                  control={form.control}
+                  name="cover_image_url"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>URL da Capa (imagem principal) *</FormLabel>
+                      <FormControl>
+                        <Input placeholder="https://..." {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="images_text"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>URLs das Fotos (1 por linha) *</FormLabel>
+                      <FormControl>
+                        <Textarea rows={4} placeholder={"https://...\nhttps://..."} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <PropertyImageUploader
+                folderKey={codeValue}
+                coverUrl={coverUrl}
+                images={imagesFromText}
+                disabled={isLoading}
+                onChange={({ coverUrl: nextCover, images: nextImages }) => {
+                  form.setValue("cover_image_url", nextCover, { shouldValidate: true, shouldDirty: true });
+                  form.setValue("images_text", nextImages.join("\n"), { shouldValidate: true, shouldDirty: true });
+                }}
               />
 
-              <FormField
-                control={form.control}
-                name="images_text"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>URLs das Fotos (1 por linha) *</FormLabel>
-                    <FormControl>
-                      <Textarea rows={4} placeholder={"https://...\nhttps://..."} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* Surface validation messages */}
+              <div className="space-y-1">
+                <FormMessage>{form.formState.errors.cover_image_url?.message as any}</FormMessage>
+                <FormMessage>{form.formState.errors.images_text?.message as any}</FormMessage>
+              </div>
             </div>
+
 
             <div className="flex justify-end gap-2 pt-4">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

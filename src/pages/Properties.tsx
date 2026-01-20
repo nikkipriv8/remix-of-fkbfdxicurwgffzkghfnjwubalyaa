@@ -163,9 +163,19 @@ const Properties = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredProperties.map((property) => (
               <Card key={property.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                <div className="aspect-video bg-muted flex items-center justify-center">
-                  <Building2 className="h-12 w-12 text-muted-foreground/50" />
+                <div className="aspect-video bg-muted flex items-center justify-center overflow-hidden">
+                  {property.cover_image_url ? (
+                    <img
+                      src={property.cover_image_url}
+                      alt={`Capa do imóvel: ${property.title}`}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <Building2 className="h-12 w-12 text-muted-foreground/50" />
+                  )}
                 </div>
+
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
