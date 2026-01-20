@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, Building, Bell, Shield, MessageSquare, Copy, Check, RefreshCw, Loader2, Wifi, WifiOff, Users } from "lucide-react";
+import { User, Building, Bell, Shield, MessageSquare, Copy, Check, RefreshCw, Loader2, Wifi, WifiOff, Users, Database } from "lucide-react";
 import Header from "@/components/layout/Header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import UserManagement from "@/components/settings/UserManagement";
+import MigrationManager from "@/components/settings/MigrationManager";
 
 const Settings = () => {
   const { profile, refreshProfile } = useAuth();
@@ -122,6 +123,7 @@ const Settings = () => {
   };
 
   const canManageUsers = profile?.role === "admin" || profile?.role === "broker";
+  const isAdmin = profile?.role === "admin";
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-background">
@@ -141,6 +143,12 @@ const Settings = () => {
               <TabsTrigger value="users" className="gap-2">
                 <Users className="h-4 w-4" />
                 Usuários
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="migration" className="gap-2">
+                <Database className="h-4 w-4" />
+                Migração
               </TabsTrigger>
             )}
             <TabsTrigger value="integrations" className="gap-2">
@@ -289,6 +297,13 @@ const Settings = () => {
           <TabsContent value="users">
             <UserManagement />
           </TabsContent>
+
+          {/* Migration Tab (admin only) */}
+          {isAdmin && (
+            <TabsContent value="migration">
+              <MigrationManager />
+            </TabsContent>
+          )}
 
           {/* Integrations Tab */}
           <TabsContent value="integrations" className="space-y-6">

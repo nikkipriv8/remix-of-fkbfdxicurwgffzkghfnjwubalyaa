@@ -68,6 +68,24 @@ export type Database = {
           },
         ]
       }
+      lead_id_map: {
+        Row: {
+          created_at: string
+          new_lead_id: string
+          old_lead_id: string
+        }
+        Insert: {
+          created_at?: string
+          new_lead_id: string
+          old_lead_id: string
+        }
+        Update: {
+          created_at?: string
+          new_lead_id?: string
+          old_lead_id?: string
+        }
+        Relationships: []
+      }
       leads: {
         Row: {
           broker_id: string | null
@@ -153,6 +171,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      migration_runs: {
+        Row: {
+          created_at: string
+          errors: Json
+          id: string
+          started_by: string | null
+          status: string
+          summary: Json
+        }
+        Insert: {
+          created_at?: string
+          errors?: Json
+          id?: string
+          started_by?: string | null
+          status?: string
+          summary?: Json
+        }
+        Update: {
+          created_at?: string
+          errors?: Json
+          id?: string
+          started_by?: string | null
+          status?: string
+          summary?: Json
+        }
+        Relationships: []
+      }
+      profile_id_map: {
+        Row: {
+          created_at: string
+          email: string
+          new_profile_id: string
+          new_user_id: string
+          old_profile_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          new_profile_id: string
+          new_user_id: string
+          old_profile_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          new_profile_id?: string
+          new_user_id?: string
+          old_profile_id?: string
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -309,6 +378,162 @@ export type Database = {
           },
         ]
       }
+      property_id_map: {
+        Row: {
+          created_at: string
+          new_property_id: string
+          old_property_id: string
+        }
+        Insert: {
+          created_at?: string
+          new_property_id: string
+          old_property_id: string
+        }
+        Update: {
+          created_at?: string
+          new_property_id?: string
+          old_property_id?: string
+        }
+        Relationships: []
+      }
+      staging_leads: {
+        Row: {
+          created_at: string
+          id: string
+          old_lead_id: string | null
+          raw: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          old_lead_id?: string | null
+          raw?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          old_lead_id?: string | null
+          raw?: Json
+        }
+        Relationships: []
+      }
+      staging_profiles: {
+        Row: {
+          created_at: string
+          creci: string | null
+          email: string
+          full_name: string | null
+          id: string
+          old_profile_id: string | null
+          phone: string | null
+          raw: Json
+          role: Database["public"]["Enums"]["user_role"] | null
+        }
+        Insert: {
+          created_at?: string
+          creci?: string | null
+          email: string
+          full_name?: string | null
+          id?: string
+          old_profile_id?: string | null
+          phone?: string | null
+          raw?: Json
+          role?: Database["public"]["Enums"]["user_role"] | null
+        }
+        Update: {
+          created_at?: string
+          creci?: string | null
+          email?: string
+          full_name?: string | null
+          id?: string
+          old_profile_id?: string | null
+          phone?: string | null
+          raw?: Json
+          role?: Database["public"]["Enums"]["user_role"] | null
+        }
+        Relationships: []
+      }
+      staging_properties: {
+        Row: {
+          created_at: string
+          id: string
+          old_property_id: string | null
+          raw: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          old_property_id?: string | null
+          raw?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          old_property_id?: string | null
+          raw?: Json
+        }
+        Relationships: []
+      }
+      staging_tasks: {
+        Row: {
+          created_at: string
+          id: string
+          old_task_id: string | null
+          raw: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          old_task_id?: string | null
+          raw?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          old_task_id?: string | null
+          raw?: Json
+        }
+        Relationships: []
+      }
+      staging_visits: {
+        Row: {
+          created_at: string
+          id: string
+          old_visit_id: string | null
+          raw: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          old_visit_id?: string | null
+          raw?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          old_visit_id?: string | null
+          raw?: Json
+        }
+        Relationships: []
+      }
+      task_id_map: {
+        Row: {
+          created_at: string
+          new_task_id: string
+          old_task_id: string
+        }
+        Insert: {
+          created_at?: string
+          new_task_id: string
+          old_task_id: string
+        }
+        Update: {
+          created_at?: string
+          new_task_id?: string
+          old_task_id?: string
+        }
+        Relationships: []
+      }
       tasks: {
         Row: {
           completed_at: string | null
@@ -391,6 +616,24 @@ export type Database = {
           id?: string
           role?: Database["public"]["Enums"]["user_role"]
           user_id?: string
+        }
+        Relationships: []
+      }
+      visit_id_map: {
+        Row: {
+          created_at: string
+          new_visit_id: string
+          old_visit_id: string
+        }
+        Insert: {
+          created_at?: string
+          new_visit_id: string
+          old_visit_id: string
+        }
+        Update: {
+          created_at?: string
+          new_visit_id?: string
+          old_visit_id?: string
         }
         Relationships: []
       }
