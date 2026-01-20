@@ -47,7 +47,9 @@ Deno.serve(async (req) => {
     console.log(`[Z-API Send] action=${action} user=${claimsData.claims.sub}`);
 
     let endpoint = '';
+    let method: 'GET' | 'POST' = 'POST';
     let body: any = {};
+    let query = '';
 
     switch (action) {
       case 'send-text':
@@ -75,12 +77,21 @@ Deno.serve(async (req) => {
         };
         break;
 
+      case 'get-profile-picture':
+        endpoint = '/profile-picture';
+        method = 'GET';
+        // Z-API expects phone without '+'
+        query = phone ? `?phone=${encodeURIComponent(String(phone).replace('+', ''))}` : '';
+        break;
+
       case 'get-status':
         endpoint = '/status';
+        method = 'GET';
         break;
 
       case 'get-qrcode':
         endpoint = '/qr-code/image';
+        method = 'GET';
         break;
 
       case 'disconnect':
@@ -95,13 +106,13 @@ Deno.serve(async (req) => {
         throw new Error(`Unknown action: ${action}`);
     }
 
-    const response = await fetch(`${ZAPI_BASE_URL}${endpoint}`, {
-      method: endpoint === '/status' || endpoint === '/qr-code/image' ? 'GET' : 'POST',
+    const response = await fetch(`${ZAPI_BASE_URL}${endpoint}${query}`, {
+      method,
       headers: {
         'Content-Type': 'application/json',
         'Client-Token': Deno.env.get('ZAPI_SECURITY_TOKEN') || '',
       },
-      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+      body: method === 'POST' && Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
 
     const data = await response.json();

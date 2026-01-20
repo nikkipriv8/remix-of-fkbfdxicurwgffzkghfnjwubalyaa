@@ -12,6 +12,9 @@ import {
   updateConversationLastMessageAt,
 } from "@/features/whatsapp/services/whatsappApi";
 
+// Cache to avoid refetching profile pictures repeatedly
+const fetchedLeadAvatar = new Set<string>();
+
 // Module-level debounce timer to avoid adding/removing hooks during Fast Refresh.
 let conversationsRefreshTimer: number | null = null;
 
@@ -79,6 +82,35 @@ export function useWhatsappController() {
     try {
       const lead = await fetchLead(leadId);
       setSelectedLead(lead);
+
+      // If the lead already has a photo, nothing else to do.
+      if (!lead || lead.avatar_url || fetchedLeadAvatar.has(leadId)) return;
+      fetchedLeadAvatar.add(leadId);
+
+      // Try to fetch WhatsApp profile photo and persist it
+      const { data: picData, error: picErr } = await supabase.functions.invoke("zapi-send", {
+        body: {
+          action: "get-profile-picture",
+          phone: lead.phone,
+        },
+      });
+
+      if (picErr) return;
+
+      const link = (picData as any)?.link as string | undefined;
+      if (!link) return;
+
+      const { error: updateErr } = await supabase
+        .from("leads")
+        .update({ avatar_url: link })
+        .eq("id", leadId);
+
+      if (updateErr) return;
+
+      setSelectedLead((prev) => (prev?.id === leadId ? { ...prev, avatar_url: link } : prev));
+      setConversations((prev) =>
+        prev.map((c) => (c.lead_id === leadId ? ({ ...c, lead_avatar_url: link } as any) : c))
+      );
     } catch {
       setSelectedLead(null);
     }
