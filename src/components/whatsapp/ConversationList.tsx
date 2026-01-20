@@ -63,6 +63,12 @@ export default function ConversationList({
       .slice(0, 2);
   };
 
+  const getAvatarUrl = (c: Conversation) => {
+    if (c.lead_avatar_url) return c.lead_avatar_url;
+    const seed = c.lead_name || c.phone;
+    return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&radius=50`;
+  };
+
   const formatTime = (date: string | null) => {
     if (!date) return "";
     const d = new Date(date);
@@ -172,9 +178,7 @@ export default function ConversationList({
                 {/* Avatar */}
                 <div className="relative">
                   <Avatar className="h-12 w-12">
-                    {c.lead_avatar_url ? (
-                      <AvatarImage src={c.lead_avatar_url} alt={c.lead_name || c.phone} />
-                    ) : null}
+                    <AvatarImage src={getAvatarUrl(c)} alt={c.lead_name || c.phone} loading="lazy" />
                     <AvatarFallback className="bg-primary/10 text-primary text-sm">
                       {c.lead_name ? getInitials(c.lead_name) : c.phone.slice(-2)}
                     </AvatarFallback>

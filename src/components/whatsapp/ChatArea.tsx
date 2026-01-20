@@ -113,6 +113,12 @@ export default function ChatArea({
       .slice(0, 2);
   };
 
+  const getAvatarUrl = () => {
+    if (avatarUrl) return avatarUrl;
+    const seed = contactName || contactPhone;
+    return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&radius=50`;
+  };
+
   const formatMessageDate = (date: Date) => {
     if (isToday(date)) return "Hoje";
     if (isYesterday(date)) return "Ontem";
@@ -143,7 +149,7 @@ export default function ChatArea({
           className="flex items-center gap-3 hover:bg-muted/50 -ml-2 pl-2 pr-4 py-1 rounded-lg transition-colors"
         >
           <Avatar className="h-10 w-10">
-            {avatarUrl ? <AvatarImage src={avatarUrl} alt={contactName} /> : null}
+            <AvatarImage src={getAvatarUrl()} alt={contactName || contactPhone} loading="lazy" />
             <AvatarFallback className="bg-primary/10 text-primary">
               {getInitials(contactName)}
             </AvatarFallback>

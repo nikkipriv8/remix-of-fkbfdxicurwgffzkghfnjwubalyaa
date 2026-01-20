@@ -79,6 +79,12 @@ export default function ContactInfoPanel({
       .slice(0, 2);
   };
 
+  const getAvatarUrl = () => {
+    if (lead?.avatar_url) return lead.avatar_url;
+    const seed = lead?.name || phone;
+    return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&radius=50`;
+  };
+
   const formatCurrency = (value: number | null) => {
     if (!value) return "-";
     return new Intl.NumberFormat("pt-BR", {
@@ -184,9 +190,7 @@ export default function ContactInfoPanel({
           {/* Avatar e Nome */}
           <div className="flex flex-col items-center text-center">
             <Avatar className="h-20 w-20 mb-3">
-              {lead?.avatar_url ? (
-                <AvatarImage src={lead.avatar_url} alt={lead.name} />
-              ) : null}
+              <AvatarImage src={getAvatarUrl()} alt={lead?.name || phone} loading="lazy" />
               <AvatarFallback className="text-xl bg-primary/10 text-primary">
                 {lead ? getInitials(lead.name) : phone.slice(-2)}
               </AvatarFallback>
