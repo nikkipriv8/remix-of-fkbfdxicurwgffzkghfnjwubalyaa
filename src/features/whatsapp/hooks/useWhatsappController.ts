@@ -153,6 +153,7 @@ export function useWhatsappController() {
 
       const { error } = await supabase.functions.invoke("assign-lead-broker", {
         body: { leadId },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       // Best-effort: ignore auth/permission failures (should never break UI)

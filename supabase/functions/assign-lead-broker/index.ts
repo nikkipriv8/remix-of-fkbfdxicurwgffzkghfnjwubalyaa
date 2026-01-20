@@ -40,10 +40,15 @@ Deno.serve(async (req) => {
     });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsRes, error: claimsErr } = await authed.auth.getClaims(token);
-    const callerUserId = claimsRes?.claims?.sub;
-    if (claimsErr || !callerUserId) {
-      console.warn("[assign-lead-broker] invalid token", claimsErr);
+    // For Lovable Cloud (verify_jwt=false), JWT must be verified explicitly by passing token.
+    const {
+      data: { user },
+      error: userErr,
+    } = await authed.auth.getUser(token);
+
+    const callerUserId = user?.id;
+    if (userErr || !callerUserId) {
+      console.warn("[assign-lead-broker] invalid token", userErr);
       return json(401, { error: "Unauthorized" });
     }
 
