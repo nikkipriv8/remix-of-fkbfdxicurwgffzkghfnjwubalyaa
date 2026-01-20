@@ -25,16 +25,29 @@ Deno.serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     const authHeader = req.headers.get("Authorization") || "";
+    const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    const accessToken = tokenMatch?.[1];
+
+    if (!accessToken) {
+      return json(401, { error: "Not authenticated" });
+    }
 
     const authed = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
-    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
 
-    const { data: userRes, error: userErr } = await authed.auth.getUser();
-    if (userErr) throw userErr;
+    const { data: userRes, error: userErr } = await authed.auth.getUser(accessToken);
+    if (userErr) {
+      // Auth errors should not crash the app with 500
+      return json(401, { error: userErr.message || "Not authenticated" });
+    }
     const user = userRes?.user;
     if (!user) return json(401, { error: "Not authenticated" });
+
 
     const email = (user.email || "").toLowerCase();
     const fullName =
