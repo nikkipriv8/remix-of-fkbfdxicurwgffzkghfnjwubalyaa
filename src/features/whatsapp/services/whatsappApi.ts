@@ -13,19 +13,35 @@ export async function fetchConversations() {
   if (convError) throw convError;
 
   const leadIds = convData?.filter((c) => c.lead_id).map((c) => c.lead_id) || [];
-  let leadsMap: Record<string, string> = {};
+  let leadsMap: Record<string, { name: string; avatar_url?: string | null }> = {};
 
   if (leadIds.length > 0) {
     const { data: leadsData } = await supabase
       .from("leads")
-      .select("id, name")
+      .select("id, name, avatar_url")
       .in("id", leadIds);
 
     if (leadsData) {
       leadsMap = leadsData.reduce((acc, lead) => {
-        acc[lead.id] = lead.name;
+        acc[lead.id] = { name: lead.name, avatar_url: (lead as any).avatar_url ?? null };
         return acc;
-      }, {} as Record<string, string>);
+      }, {} as Record<string, { name: string; avatar_url?: string | null }>);
+    }
+  }
+
+  const conversationIds = (convData || []).map((c) => c.id);
+  let unreadMap: Record<string, number> = {};
+
+  if (conversationIds.length > 0) {
+    const { data: unreadRows } = await supabase.rpc("get_unread_counts", {
+      conversation_ids: conversationIds,
+    });
+
+    if (unreadRows) {
+      unreadMap = (unreadRows as any[]).reduce((acc, row) => {
+        acc[row.conversation_id] = row.unread_count;
+        return acc;
+      }, {} as Record<string, number>);
     }
   }
 
@@ -39,10 +55,14 @@ export async function fetchConversations() {
         .limit(1)
         .maybeSingle();
 
+      const leadInfo = conv.lead_id ? leadsMap[conv.lead_id] : undefined;
+
       return {
         ...(conv as any),
-        lead_name: conv.lead_id ? leadsMap[conv.lead_id] : undefined,
+        lead_name: leadInfo?.name,
+        lead_avatar_url: leadInfo?.avatar_url ?? null,
         last_message: lastMsg?.content || null,
+        unread_count: unreadMap[conv.id] ?? 0,
       } as Conversation;
     })
   );

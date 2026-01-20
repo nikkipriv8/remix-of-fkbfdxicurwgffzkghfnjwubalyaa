@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +56,7 @@ type ChatAreaProps = {
   isLoading: boolean;
   contactName: string;
   contactPhone: string;
+  avatarUrl?: string | null;
   isActive: boolean;
   automationEnabled: boolean;
   onToggleAutomation: () => void;
@@ -70,6 +71,7 @@ export default function ChatArea({
   isLoading,
   contactName,
   contactPhone,
+  avatarUrl,
   isActive,
   automationEnabled,
   onToggleAutomation,
@@ -141,6 +143,7 @@ export default function ChatArea({
           className="flex items-center gap-3 hover:bg-muted/50 -ml-2 pl-2 pr-4 py-1 rounded-lg transition-colors"
         >
           <Avatar className="h-10 w-10">
+            {avatarUrl ? <AvatarImage src={avatarUrl} alt={contactName} /> : null}
             <AvatarFallback className="bg-primary/10 text-primary">
               {getInitials(contactName)}
             </AvatarFallback>

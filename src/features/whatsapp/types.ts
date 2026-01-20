@@ -4,6 +4,7 @@ export type Conversation = {
   whatsapp_id: string;
   lead_id: string | null;
   lead_name?: string;
+  lead_avatar_url?: string | null;
   last_message_at: string | null;
   last_message?: string | null;
   is_active: boolean;
@@ -37,5 +38,6 @@ export type Lead = {
   min_budget: number | null;
   max_budget: number | null;
   preferred_neighborhoods: string[] | null;
+  avatar_url?: string | null;
   created_at: string;
 };
