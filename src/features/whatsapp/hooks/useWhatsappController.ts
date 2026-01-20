@@ -269,10 +269,16 @@ export function useWhatsappController() {
               return prev;
             }
 
+            const incrementUnread =
+              newMsg.direction === "inbound" && newMsg.conversation_id !== selectedConversationId;
+
             const updated = {
               ...prev[idx],
               last_message_at: newMsg.created_at,
               last_message: newMsg.content ?? null,
+              unread_count: incrementUnread
+                ? ((prev[idx] as any).unread_count ?? 0) + 1
+                : (prev[idx] as any).unread_count,
             } as Conversation;
 
             const next = [...prev];
