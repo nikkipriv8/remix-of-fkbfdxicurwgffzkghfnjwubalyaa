@@ -245,7 +245,59 @@ export function useWhatsappController() {
 
     const conv = conversations.find((c) => c.id === selectedConversationId);
     if (conv) {
-      loadLeadInfo(conv.lead_id);
+      (async () => {
+        try {
+          // Ensure we have a lead linked to the conversation
+          let leadId = conv.lead_id;
+
+          if (!leadId) {
+            // Try to find an existing lead by phone
+            const { data: existingLead } = await supabase
+              .from("leads")
+              .select("id")
+              .eq("phone", conv.phone)
+              .maybeSingle();
+
+            if (existingLead?.id) {
+              leadId = existingLead.id as any;
+            } else {
+              // Create a minimal lead (so we can store avatar_url)
+              const { data: createdLead, error: createErr } = await supabase
+                .from("leads")
+                .insert({
+                  name: conv.phone,
+                  phone: conv.phone,
+                  whatsapp_id: conv.whatsapp_id,
+                  source: "whatsapp",
+                  status: "new",
+                  priority: "medium",
+                } as any)
+                .select("id")
+                .single();
+
+              if (createErr) throw createErr;
+              leadId = (createdLead as any)?.id;
+            }
+
+            if (leadId) {
+              await supabase
+                .from("whatsapp_conversations")
+                .update({ lead_id: leadId })
+                .eq("id", conv.id);
+
+              setConversations((prev) =>
+                prev.map((c) => (c.id === conv.id ? ({ ...c, lead_id: leadId } as any) : c))
+              );
+            }
+          }
+
+          if (leadId) {
+            await loadLeadInfo(leadId);
+          }
+        } catch {
+          // ignore
+        }
+      })();
     }
 
     // Mark as read (for unread counters)

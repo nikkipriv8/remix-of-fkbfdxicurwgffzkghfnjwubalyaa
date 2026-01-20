@@ -80,8 +80,8 @@ Deno.serve(async (req) => {
       case 'get-profile-picture':
         endpoint = '/profile-picture';
         method = 'GET';
-        // Z-API expects phone without '+'
-        query = phone ? `?phone=${encodeURIComponent(String(phone).replace('+', ''))}` : '';
+        // Z-API expects phone digits only (no '+', spaces, '@lid', etc.)
+        query = phone ? `?phone=${encodeURIComponent(String(phone).replace(/\D/g, ''))}` : '';
         break;
 
       case 'get-status':
