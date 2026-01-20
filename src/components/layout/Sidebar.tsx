@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useState } from 'react';
+import { useWhatsappUnreadTotal } from '@/features/whatsapp/hooks/useWhatsappUnreadTotal';
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +42,7 @@ export default function Sidebar() {
   const location = useLocation();
   const { profile, signOut } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const { total: whatsappUnread } = useWhatsappUnreadTotal();
 
   const getInitials = (name: string) => {
     return name
@@ -52,6 +54,7 @@ export default function Sidebar() {
   };
 
   const NavItem = ({ item, isActive }: { item: typeof menuItems[0]; isActive: boolean }) => {
+    const badgeValue = item.path === "/whatsapp" ? whatsappUnread : 0;
     const content = (
       <Link
         to={item.path}
@@ -69,16 +72,16 @@ export default function Sidebar() {
         {!collapsed && (
           <>
             <span className="text-sm font-medium">{item.label}</span>
-            {item.badge && (
-              <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-accent-foreground animate-pulse-soft">
-                3
+            {item.badge && badgeValue > 0 && (
+              <span className="ml-auto flex h-5 min-w-5 px-1 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-accent-foreground animate-pulse-soft">
+                {badgeValue > 99 ? "99+" : badgeValue}
               </span>
             )}
           </>
         )}
-        {collapsed && item.badge && (
-          <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-accent text-[9px] font-bold text-accent-foreground flex items-center justify-center">
-            3
+        {collapsed && item.badge && badgeValue > 0 && (
+          <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-accent text-[9px] font-bold text-accent-foreground flex items-center justify-center">
+            {badgeValue > 99 ? "99+" : badgeValue}
           </span>
         )}
       </Link>

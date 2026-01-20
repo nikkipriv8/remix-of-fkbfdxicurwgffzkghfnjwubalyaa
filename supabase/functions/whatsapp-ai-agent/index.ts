@@ -12,6 +12,16 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+const uuidRe =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function json(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 const SYSTEM_PROMPT = `Você é a assistente virtual de uma imobiliária moderna. Seu nome é Sofia.
 
 **Seu papel:**
@@ -116,28 +126,17 @@ Deno.serve(async (req) => {
     const message = typeof payload?.message === "string" ? payload.message : "";
     const phone = typeof payload?.phone === "string" ? payload.phone : "";
 
-    const uuidRe =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!uuidRe.test(conversationId)) {
-      return new Response(JSON.stringify({ error: "Invalid conversationId" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json(400, { error: "Invalid conversationId" });
     }
 
     const cleanPhone = phone.replace(/\D/g, "");
     if (cleanPhone.length < 10 || cleanPhone.length > 15) {
-      return new Response(JSON.stringify({ error: "Invalid phone" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json(400, { error: "Invalid phone" });
     }
 
     if (!message || message.length > 2000) {
-      return new Response(JSON.stringify({ error: "Invalid message" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json(400, { error: "Invalid message" });
     }
 
     // minimal log only
@@ -216,6 +215,45 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
 \n\n${propertyContext}`
         : `Não há imóveis disponíveis retornados do banco de dados agora. Se o cliente pedir imóveis, peça cidade/bairro/orçamento/quartos e informe que o consultor irá ajudar.`;
 
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "schedule_visit",
+          description:
+            "Cria um rascunho de visita (status scheduled) para um lead e imóvel. Use SOMENTE quando o cliente informar data, hora e fuso horário.",
+          parameters: {
+            type: "object",
+            properties: {
+              property_id: {
+                type: "string",
+                description: "UUID do imóvel (ID: ... do contexto de imóveis)",
+              },
+              property_code: {
+                type: "string",
+                description: "Código do imóvel (Código: ... do contexto de imóveis)",
+              },
+              scheduled_at_iso: {
+                type: "string",
+                description:
+                  "Data/hora em ISO-8601 com offset (ex: 2026-01-20T14:00:00-03:00).",
+              },
+              timezone: {
+                type: "string",
+                description:
+                  "Fuso horário informado pelo cliente. Se não estiver claro, PERGUNTE antes (ex: 'Horário de Brasília / America/Sao_Paulo').",
+              },
+              notes: {
+                type: "string",
+                description: "Observações opcionais do cliente (ex: 'prefere tarde').",
+              },
+            },
+            required: ["scheduled_at_iso", "timezone"],
+          },
+        },
+      },
+    ];
+
     // Call Lovable AI Gateway
     const aiResponse = await fetch(AI_GATEWAY_URL, {
       method: "POST",
@@ -230,6 +268,8 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
           { role: "system", content: propertySystemContext },
           ...conversationHistory,
         ],
+        tools,
+        tool_choice: "auto",
         max_tokens: 800,
         temperature: 0.4,
       }),
@@ -255,7 +295,102 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
     }
 
     const aiData = await aiResponse.json();
-    const aiMessage = aiData.choices?.[0]?.message?.content || "";
+    const choiceMessage = aiData.choices?.[0]?.message || {};
+    let aiMessage = choiceMessage?.content || "";
+
+    const toolCalls = Array.isArray(choiceMessage?.tool_calls) ? choiceMessage.tool_calls : [];
+
+    if (toolCalls.length) {
+      const scheduleCall = toolCalls.find((tc: any) => tc?.function?.name === "schedule_visit");
+      if (scheduleCall) {
+        let args: any = {};
+        try {
+          args = JSON.parse(scheduleCall.function.arguments || "{}");
+        } catch {
+          args = {};
+        }
+
+        // Fetch conversation + lead
+        const { data: convRow } = await supabase
+          .from("whatsapp_conversations")
+          .select("lead_id")
+          .eq("id", conversationId)
+          .maybeSingle();
+
+        const leadId = (convRow as any)?.lead_id as string | null;
+        if (!leadId) {
+          aiMessage =
+            "Consigo sim! Antes, preciso vincular este WhatsApp a um lead aqui no sistema. Um corretor vai assumir a conversa e eu já registro a visita.";
+        } else {
+          const { data: leadRow } = await supabase
+            .from("leads")
+            .select("broker_id")
+            .eq("id", leadId)
+            .maybeSingle();
+
+          const brokerId = (leadRow as any)?.broker_id as string | null;
+          if (!brokerId) {
+            aiMessage =
+              "Perfeito! Para eu registrar a visita, preciso que um corretor assuma este atendimento na plataforma. Pode aguardar um instante?";
+          } else if (!args?.timezone) {
+            aiMessage =
+              "Claro! Só me diga em qual fuso horário devo considerar (ex: Horário de Brasília) para eu registrar certinho.";
+          } else {
+            const scheduledIso = String(args?.scheduled_at_iso || "");
+            const scheduledAt = new Date(scheduledIso);
+            if (!scheduledIso || Number.isNaN(scheduledAt.getTime())) {
+              aiMessage =
+                "Para eu registrar a visita, me confirme a data e a hora em um formato claro (ex: 20/01 às 14:00) e o fuso horário.";
+            } else {
+              // Resolve property_id
+              let propertyId = String(args?.property_id || "");
+              const propertyCode = String(args?.property_code || "").trim();
+
+              if (!propertyId && propertyCode) {
+                const match = (props || []).find((p: any) => String(p.code).trim() === propertyCode);
+                if (match?.id) propertyId = String(match.id);
+              }
+
+              if (propertyId && !uuidRe.test(propertyId)) {
+                propertyId = "";
+              }
+
+              if (!propertyId) {
+                aiMessage =
+                  "Qual o código do imóvel que você quer visitar? Assim que você me disser (ex: 'código 123'), eu registro o rascunho da visita.";
+              } else {
+                const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
+                const tz = String(args.timezone).trim();
+
+                const { error: visitErr } = await supabase.from("visits").insert({
+                  lead_id: leadId,
+                  property_id: propertyId,
+                  broker_id: brokerId,
+                  scheduled_at: scheduledAt.toISOString(),
+                  status: "scheduled",
+                  notes: [
+                    "Rascunho criado pela IA (WhatsApp)",
+                    `Fuso informado: ${tz}`,
+                    notes ? `Obs: ${notes}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" | "),
+                } as any);
+
+                if (visitErr) {
+                  console.error("[AI Agent] schedule_visit insert error", visitErr);
+                  aiMessage =
+                    "Tive um problema ao registrar a visita agora. Um corretor vai te atender por aqui e confirmar o agendamento.";
+                } else {
+                  aiMessage =
+                    "Perfeito! Registrei um *rascunho* de visita no sistema. Um corretor vai confirmar a data/horário com você por aqui 😉";
+                }
+              }
+            }
+          }
+        }
+      }
+    }
 
     // do not log message content
 
@@ -291,7 +426,11 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
         direction: "outbound",
         status: "sent",
         ai_processed: true,
-        ai_response: { model: "google/gemini-3-flash-preview", tokens: aiData.usage?.total_tokens },
+        ai_response: {
+          model: "google/gemini-3-flash-preview",
+          tokens: aiData.usage?.total_tokens,
+          tool_calls: toolCalls?.length ? toolCalls : undefined,
+        },
       });
 
     if (insertError) {
