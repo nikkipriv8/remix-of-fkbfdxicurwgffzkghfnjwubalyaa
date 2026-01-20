@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Conversation, Lead, Message } from "@/features/whatsapp/types";
@@ -28,6 +28,19 @@ export function useWhatsappController() {
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
+  // Keep latest selected conversation id accessible from stable realtime callbacks
+  const selectedConversationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  // Keep latest loadConversations accessible (avoids stale closures in debounced/realtime paths)
+  const loadConversationsRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(
+    async () => {
+      // no-op until initialized
+    }
+  );
+
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId]
@@ -40,7 +53,7 @@ export function useWhatsappController() {
 
     // Keep it near-instant, but still collapse bursts of events.
     conversationsRefreshTimer = window.setTimeout(() => {
-      loadConversations({ silent: true });
+      loadConversationsRef.current({ silent: true });
     }, 50);
   };
 
@@ -60,6 +73,11 @@ export function useWhatsappController() {
       if (!silent) setIsLoadingConversations(false);
     }
   };
+
+  // keep ref pointing to latest implementation
+  useEffect(() => {
+    loadConversationsRef.current = loadConversations;
+  }, [loadConversations]);
 
   const loadConversationMessages = async (conversationId: string) => {
     setIsLoadingMessages(true);
@@ -315,7 +333,7 @@ export function useWhatsappController() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversationId]);
 
-  // realtime
+  // realtime (subscribe once; use refs to avoid stale closures)
   useEffect(() => {
     const channel = supabase
       .channel("whatsapp-realtime-v2")
@@ -324,6 +342,7 @@ export function useWhatsappController() {
         { event: "INSERT", schema: "public", table: "whatsapp_messages" },
         (payload) => {
           const newMsg = payload.new as Message;
+          const selectedId = selectedConversationIdRef.current;
 
           // 1) Update message list instantly (selected conversation only)
           setMessages((prev) => {
@@ -337,7 +356,7 @@ export function useWhatsappController() {
               );
             }
 
-            if (newMsg.conversation_id === selectedConversationId) {
+            if (newMsg.conversation_id === selectedId) {
               return [...prev, newMsg];
             }
 
@@ -354,7 +373,7 @@ export function useWhatsappController() {
             }
 
             const incrementUnread =
-              newMsg.direction === "inbound" && newMsg.conversation_id !== selectedConversationId;
+              newMsg.direction === "inbound" && newMsg.conversation_id !== selectedId;
 
             const updated = {
               ...prev[idx],
@@ -408,7 +427,8 @@ export function useWhatsappController() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedConversationId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return {
     conversations,
