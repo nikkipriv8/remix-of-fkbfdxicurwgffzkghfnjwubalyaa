@@ -1,0 +1,178 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
+const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+const SYSTEM_PROMPT = `Você é a assistente virtual de uma imobiliária moderna. Seu nome é Sofia.
+
+**Seu papel:**
+- Atender clientes interessados em comprar, alugar ou vender imóveis
+- Coletar informações sobre as preferências do cliente (tipo de imóvel, localização, número de quartos, orçamento)
+- Agendar visitas aos imóveis
+- Responder dúvidas sobre financiamento, documentação e processo de compra/aluguel
+- Ser cordial, profissional e prestativa
+
+**Diretrizes:**
+- Sempre cumprimente o cliente de forma amigável
+- Faça perguntas para entender melhor o que o cliente procura
+- Quando o cliente demonstrar interesse em um imóvel específico, ofereça agendar uma visita
+- Mantenha respostas concisas e objetivas (máximo 3-4 frases por mensagem)
+- Use emojis com moderação para tornar a conversa mais amigável
+- Se não souber algo, diga que vai verificar com a equipe e retorna
+
+**Informações que você deve coletar:**
+1. Tipo de transação desejada (compra, aluguel ou venda)
+2. Tipo de imóvel (apartamento, casa, comercial, terreno)
+3. Localização/bairro preferido
+4. Número mínimo de quartos
+5. Faixa de orçamento
+6. Prazo para mudança
+
+Responda sempre em português brasileiro de forma natural e amigável.`;
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { conversationId, message, phone } = await req.json();
+
+    console.log(`[AI Agent] Processing message for conversation ${conversationId}`);
+
+    // Get conversation history for context
+    const { data: messages, error: msgError } = await supabase
+      .from("whatsapp_messages")
+      .select("content, direction, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(20);
+
+    if (msgError) {
+      console.error("[AI Agent] Error fetching messages:", msgError);
+      throw msgError;
+    }
+
+    // Build conversation history for AI
+    const conversationHistory = messages?.map((msg) => ({
+      role: msg.direction === "inbound" ? "user" : "assistant",
+      content: msg.content || "",
+    })) || [];
+
+    // If the current message isn't in history yet, add it
+    if (message && !conversationHistory.some(m => m.content === message)) {
+      conversationHistory.push({ role: "user", content: message });
+    }
+
+    console.log(`[AI Agent] Sending ${conversationHistory.length} messages to AI`);
+
+    // Call Lovable AI Gateway
+    const aiResponse = await fetch(AI_GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...conversationHistory,
+        ],
+        max_tokens: 500,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      console.error("[AI Agent] AI Gateway error:", aiResponse.status, errorText);
+      
+      if (aiResponse.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded" }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (aiResponse.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "Payment required" }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`AI Gateway error: ${aiResponse.status}`);
+    }
+
+    const aiData = await aiResponse.json();
+    const aiMessage = aiData.choices?.[0]?.message?.content || "";
+
+    console.log(`[AI Agent] AI Response: ${aiMessage.substring(0, 100)}...`);
+
+    // Send response via Z-API
+    const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
+    const ZAPI_TOKEN = Deno.env.get("ZAPI_TOKEN")!;
+    const ZAPI_SECURITY_TOKEN = Deno.env.get("ZAPI_SECURITY_TOKEN") || "";
+
+    const zapiResponse = await fetch(
+      `https://api.z-api.io/instances/${ZAPI_INSTANCE_ID}/token/${ZAPI_TOKEN}/send-text`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Client-Token": ZAPI_SECURITY_TOKEN,
+        },
+        body: JSON.stringify({
+          phone,
+          message: aiMessage,
+        }),
+      }
+    );
+
+    const zapiData = await zapiResponse.json();
+    console.log("[AI Agent] Z-API response:", zapiData);
+
+    // Store the AI response in the database
+    const { error: insertError } = await supabase
+      .from("whatsapp_messages")
+      .insert({
+        conversation_id: conversationId,
+        message_id: zapiData.messageId || null,
+        content: aiMessage,
+        direction: "outbound",
+        status: "sent",
+        ai_processed: true,
+        ai_response: { model: "google/gemini-3-flash-preview", tokens: aiData.usage?.total_tokens },
+      });
+
+    if (insertError) {
+      console.error("[AI Agent] Error storing AI response:", insertError);
+    }
+
+    // Update conversation
+    await supabase
+      .from("whatsapp_conversations")
+      .update({ last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    return new Response(
+      JSON.stringify({ success: true, message: aiMessage }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("[AI Agent Error]", error);
+    return new Response(
+      JSON.stringify({ error: errorMessage }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
