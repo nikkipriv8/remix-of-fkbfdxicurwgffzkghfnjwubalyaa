@@ -88,6 +88,7 @@ export type Database = {
       }
       leads: {
         Row: {
+          avatar_url: string | null
           broker_id: string | null
           created_at: string
           email: string | null
@@ -113,6 +114,7 @@ export type Database = {
           whatsapp_id: string | null
         }
         Insert: {
+          avatar_url?: string | null
           broker_id?: string | null
           created_at?: string
           email?: string | null
@@ -138,6 +140,7 @@ export type Database = {
           whatsapp_id?: string | null
         }
         Update: {
+          avatar_url?: string | null
           broker_id?: string | null
           created_at?: string
           email?: string | null
@@ -707,6 +710,38 @@ export type Database = {
           },
         ]
       }
+      whatsapp_conversation_reads: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          last_read_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          last_read_at?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          last_read_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_conversation_reads_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_conversations: {
         Row: {
           ai_context: Json | null
@@ -813,6 +848,13 @@ export type Database = {
     }
     Functions: {
       can_manage_users: { Args: { _user_id: string }; Returns: boolean }
+      get_unread_counts: {
+        Args: { conversation_ids: string[] }
+        Returns: {
+          conversation_id: string
+          unread_count: number
+        }[]
+      }
       get_user_profile_id: { Args: { _user_id: string }; Returns: string }
       get_user_role: {
         Args: { _user_id: string }
@@ -827,6 +869,10 @@ export type Database = {
       }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_admin_or_moderator: { Args: { _user_id: string }; Returns: boolean }
+      mark_conversation_read: {
+        Args: { _conversation_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       lead_priority: "low" | "medium" | "high" | "urgent"
