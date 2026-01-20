@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Conversation, Lead, Message } from "@/features/whatsapp/types";
@@ -27,8 +27,23 @@ export function useWhatsappController() {
     [conversations, selectedConversationId]
   );
 
-  const loadConversations = async () => {
-    setIsLoadingConversations(true);
+  const refreshTimerRef = useRef<number | null>(null);
+
+  const scheduleConversationsRefresh = () => {
+    if (refreshTimerRef.current) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+
+    // Debounce to avoid heavy N+1 refreshes on every realtime event.
+    refreshTimerRef.current = window.setTimeout(() => {
+      loadConversations({ silent: true });
+    }, 600);
+  };
+
+  const loadConversations = async (opts?: { silent?: boolean }) => {
+    const silent = !!opts?.silent;
+    if (!silent) setIsLoadingConversations(true);
+
     try {
       const list = await fetchConversations();
       setConversations(list);
@@ -38,7 +53,7 @@ export function useWhatsappController() {
     } catch {
       // UI already handles empty state; keep silent
     } finally {
-      setIsLoadingConversations(false);
+      if (!silent) setIsLoadingConversations(false);
     }
   };
 
@@ -195,6 +210,7 @@ export function useWhatsappController() {
         (payload) => {
           const newMsg = payload.new as Message;
 
+          // 1) Update message list instantly (selected conversation only)
           setMessages((prev) => {
             const exists = prev.some(
               (m) => m.id === newMsg.id || (m.id.startsWith("temp-") && m.content === newMsg.content)
@@ -213,7 +229,26 @@ export function useWhatsappController() {
             return prev;
           });
 
-          loadConversations();
+          // 2) Update conversation list locally (avoid heavy refresh on each event)
+          setConversations((prev) => {
+            const idx = prev.findIndex((c) => c.id === newMsg.conversation_id);
+            if (idx === -1) {
+              // New conversation for this user: do a debounced refresh
+              scheduleConversationsRefresh();
+              return prev;
+            }
+
+            const updated = {
+              ...prev[idx],
+              last_message_at: newMsg.created_at,
+              last_message: newMsg.content ?? null,
+            } as Conversation;
+
+            const next = [...prev];
+            next.splice(idx, 1);
+            next.unshift(updated);
+            return next;
+          });
         }
       )
       .on(
@@ -222,6 +257,19 @@ export function useWhatsappController() {
         (payload) => {
           const updatedMsg = payload.new as Message;
           setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)));
+
+          // keep the conversation preview updated when status/content changes
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === updatedMsg.conversation_id
+                ? ({
+                    ...c,
+                    last_message_at: updatedMsg.created_at,
+                    last_message: updatedMsg.content ?? c.last_message ?? null,
+                  } as Conversation)
+                : c
+            )
+          );
         }
       )
       .on(
@@ -239,7 +287,7 @@ export function useWhatsappController() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedConversationId, selectedConversation?.id]);
+  }, [selectedConversationId]);
 
   return {
     conversations,
