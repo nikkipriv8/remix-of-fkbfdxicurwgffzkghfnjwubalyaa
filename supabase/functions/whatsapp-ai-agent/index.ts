@@ -170,6 +170,52 @@ Deno.serve(async (req) => {
 
     console.log(`[AI Agent] sending history_len=${conversationHistory.length}`);
 
+    // Fetch available properties to ground responses
+    const { data: props, error: propError } = await supabase
+      .from("properties")
+      .select(
+        "id, title, description, code, address_city, address_neighborhood, address_state, address_street, address_number, address_zipcode, bedrooms, bathrooms, parking_spots, area_total, rent_price, sale_price, condominium_fee, cover_image_url, images"
+      )
+      .eq("status", "available")
+      .order("is_featured", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    if (propError) {
+      console.error("[AI Agent] Error fetching properties:", propError);
+    }
+
+    const propertyContext = (props || [])
+      .map((p: any) => {
+        const addr = `${p.address_street || ""} ${p.address_number || ""}, ${p.address_neighborhood || ""} - ${p.address_city || ""}/${p.address_state || ""}, CEP ${p.address_zipcode || ""}`
+          .replace(/\s+/g, " ")
+          .trim();
+        const images = Array.isArray(p.images) ? p.images : [];
+        const extraImages = images.filter(Boolean).slice(0, 5);
+
+        return [
+          `ID: ${p.id}`,
+          `Título: ${p.title}`,
+          `Código: ${p.code}`,
+          `Endereço: ${addr}`,
+          `Quartos: ${p.bedrooms} | Banheiros: ${p.bathrooms} | Vagas: ${p.parking_spots ?? 0}`,
+          `Área total: ${p.area_total} m²`,
+          `Aluguel: ${p.rent_price} | Venda: ${p.sale_price} | Condomínio: ${p.condominium_fee ?? 0}`,
+          `Descrição: ${p.description || ""}`,
+          `Capa: ${p.cover_image_url || ""}`,
+          `Fotos: ${extraImages.join(", ")}`,
+        ].join("\n");
+      })
+      .join("\n\n---\n\n");
+
+    const propertySystemContext =
+      props && props.length
+        ? `Você tem acesso ao banco de dados de imóveis.
+A consulta foi feita em: supabase.from("properties").select(...).eq("status","available").
+Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados para apresentar ao cliente, de forma bonita e completa (incluindo cidade, bairro, UF, endereço, CEP, quartos, banheiros, vagas, área m², preço aluguel, preço venda, condomínio, título, descrição e URLs de fotos/capa). Se o cliente pedir algo que não está aqui, peça os filtros (cidade/bairro/orçamento/quartos) e diga que o consultor complementa.
+\n\n${propertyContext}`
+        : `Não há imóveis disponíveis retornados do banco de dados agora. Se o cliente pedir imóveis, peça cidade/bairro/orçamento/quartos e informe que o consultor irá ajudar.`;
+
     // Call Lovable AI Gateway
     const aiResponse = await fetch(AI_GATEWAY_URL, {
       method: "POST",
@@ -181,10 +227,11 @@ Deno.serve(async (req) => {
         model: "google/gemini-3-flash-preview",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: propertySystemContext },
           ...conversationHistory,
         ],
-        max_tokens: 500,
-        temperature: 0.7,
+        max_tokens: 800,
+        temperature: 0.4,
       }),
     });
 
