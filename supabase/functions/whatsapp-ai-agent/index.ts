@@ -163,9 +163,23 @@ function escapeIlike(input: string) {
   return input.replace(/[%_]/g, (m) => `\\${m}`);
 }
 
-async function resolvePropertyIdByAddress(addressQueryRaw: string): Promise<string | null> {
+type PropertyCandidate = {
+  id: string;
+  code: string;
+  title: string;
+  address_street: string | null;
+  address_number: string | null;
+  address_neighborhood: string;
+  address_city: string;
+  address_state: string;
+};
+
+async function resolvePropertyByAddress(addressQueryRaw: string): Promise<{
+  id: string | null;
+  candidates?: PropertyCandidate[];
+}> {
   const q = addressQueryRaw.trim();
-  if (!q) return null;
+  if (!q) return { id: null };
 
   // Keep query short to avoid abuse and overly broad matches
   const safe = escapeIlike(q.slice(0, 120));
@@ -190,14 +204,15 @@ async function resolvePropertyIdByAddress(addressQueryRaw: string): Promise<stri
 
   if (error) {
     console.warn("[AI Agent] resolvePropertyIdByAddress error", error);
-    return null;
+    return { id: null };
   }
 
-  const rows = (data || []) as any[];
-  if (rows.length === 1) return rows[0]?.id ?? null;
+  const rows = (data || []) as PropertyCandidate[];
+  if (rows.length === 1) return { id: rows[0]?.id ?? null };
 
   // Multiple or none: ambiguous
-  return null;
+  if (rows.length > 1) return { id: null, candidates: rows };
+  return { id: null };
 }
 
 Deno.serve(async (req) => {
@@ -507,13 +522,34 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                 if (!propertyId) {
                   const addr = typeof args?.property_address === "string" ? args.property_address : "";
                   if (addr.trim()) {
-                    propertyId = await resolvePropertyIdByAddress(addr);
+                    const resolved = await resolvePropertyByAddress(addr);
+                    propertyId = resolved.id;
+
+                    if (!propertyId && resolved.candidates?.length) {
+                      const list = resolved.candidates
+                        .slice(0, 3)
+                        .map((c, idx) => {
+                          const addrLine = `${c.address_street || ""} ${c.address_number || ""}, ${c.address_neighborhood} - ${c.address_city}/${c.address_state}`
+                            .replace(/\s+/g, " ")
+                            .trim();
+                          return `${idx + 1}) ${c.title} (código ${c.code}) — ${addrLine}`;
+                        })
+                        .join("\n");
+
+                      aiMessage =
+                        `Encontrei mais de um imóvel com esse endereço/descrição. Qual deles é o certo?\n\n${list}\n\nResponda com o *número* (1, 2, 3) ou com o *código* do imóvel.`;
+                      // Do not proceed to insert until user disambiguates
+                      propertyId = null;
+                    }
                   }
                 }
 
                 if (!propertyId) {
-                  aiMessage =
-                    "Consigo agendar sim — mas preciso identificar o imóvel certinho. Pode me enviar o *endereço completo* (rua, número, bairro e cidade)? Se souber, mande também o *código do imóvel*.";
+                  // If we already asked for disambiguation above, keep that message.
+                  if (!aiMessage) {
+                    aiMessage =
+                      "Consigo agendar sim — mas preciso identificar o imóvel certinho. Pode me enviar o *endereço completo* (rua, número, bairro e cidade)? Se souber, mande também o *código do imóvel*.";
+                  }
                 } else {
                 const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
                 const tz = String(args?.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
@@ -541,8 +577,22 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                   console.log(
                     `[AI Agent] schedule_visit inserted lead=${leadId} broker=${brokerId} property=${propertyId} at=${scheduledAt.toISOString()}`
                   );
+                  // Fetch property details for a clear confirmation question
+                  const { data: propRow } = await supabase
+                    .from("properties")
+                    .select(
+                      "code, title, address_street, address_number, address_neighborhood, address_city, address_state"
+                    )
+                    .eq("id", propertyId)
+                    .maybeSingle();
+
+                  const p: any = propRow || {};
+                  const pAddr = `${p.address_street || ""} ${p.address_number || ""}, ${p.address_neighborhood || ""} - ${p.address_city || ""}/${p.address_state || ""}`
+                    .replace(/\s+/g, " ")
+                    .trim();
+
                   aiMessage =
-                    "Perfeito! Registrei um *rascunho* de visita no sistema. Um corretor vai confirmar a data/horário com você por aqui 😉";
+                    `Agendamento registrado como *rascunho* ✅\n\nImóvel: ${p.title || "(sem título)"} (código ${p.code || "-"})\nEndereço: ${pAddr || "-"}\nData/hora: ${scheduledIso}\n\nVocê confirma esse agendamento? Responda *SIM* para confirmar ou *NÃO* para remarcar.`;
                 }
                 }
               }
