@@ -10,7 +10,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+
 type EntityKey = "profiles" | "properties" | "leads" | "tasks" | "visits";
+
+const MAX_IMPORT_ITEMS = 1000;
+const RATE_LIMIT_WINDOW_MS = 60_000;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -31,6 +35,29 @@ async function requireAdmin(service: any, userId: string) {
   if (!data) throw new Error("Sem permissão (apenas administrador)");
 }
 
+async function insertAuditLog(service: any, params: {
+  admin_user_id: string;
+  action: string;
+  entity?: string | null;
+  record_count?: number | null;
+  success: boolean;
+  errors: any[];
+}) {
+  try {
+    await service.from("migration_audit_log").insert({
+      admin_user_id: params.admin_user_id,
+      action: params.action,
+      entity: params.entity ?? null,
+      record_count: params.record_count ?? null,
+      success: params.success,
+      errors: params.errors ?? [],
+    });
+  } catch (e) {
+    console.error("[migration-manager] failed to write audit log", e);
+  }
+}
+
+
 function pickOldId(obj: any): string | null {
   return (
     obj?.old_id ||
@@ -42,8 +69,16 @@ function pickOldId(obj: any): string | null {
   );
 }
 
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // For audit logging in catch
+  let service: any = null;
+  let adminUserId: string | null = null;
+  let auditAction: string | null = null;
+  let auditEntity: string | null = null;
+  let auditRecordCount: number | null = null;
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -56,24 +91,54 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { data: userRes, error: userErr } = await authed.auth.getUser();
     if (userErr) throw userErr;
     if (!userRes?.user) return jsonResponse(401, { error: "Not authenticated" });
 
+    adminUserId = userRes.user.id;
+
     await requireAdmin(service, userRes.user.id);
+
+    // Basic rate limit: block repeated operations from the same admin in a short window
+    const sinceIso = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+    const { data: recentRuns, error: recentErr } = await service
+      .from("migration_runs")
+      .select("id")
+      .eq("started_by", userRes.user.id)
+      .gte("created_at", sinceIso)
+      .limit(1);
+
+    if (recentErr) throw recentErr;
+    if ((recentRuns || []).length > 0) {
+      return jsonResponse(429, {
+        error: "Aguarde um momento antes de iniciar outra migração.",
+      });
+    }
 
     const body = await req.json().catch(() => ({}));
     const action = body?.action as string;
+
+    auditAction = action || null;
+
+
 
     if (action === "import") {
       const entity = body?.entity as EntityKey;
       const replace = Boolean(body?.replace);
       const items = body?.items as any[];
 
+      auditEntity = entity || null;
+      auditRecordCount = Array.isArray(items) ? items.length : null;
+
       if (!entity) return jsonResponse(400, { error: "Missing entity" });
       if (!Array.isArray(items)) return jsonResponse(400, { error: "items must be an array" });
+      if (items.length > MAX_IMPORT_ITEMS) {
+        return jsonResponse(400, {
+          error: `Batch size limited to ${MAX_IMPORT_ITEMS} records. Please split your import.`,
+        });
+      }
 
       const tableByEntity: Record<EntityKey, string> = {
         profiles: "staging_profiles",
@@ -108,7 +173,7 @@ Deno.serve(async (req) => {
             phone: it?.phone || it?.telefone || null,
             creci: it?.creci || null,
             role: it?.role || it?.cargo || null,
-            raw: it,
+            raw: it && typeof it === "object" ? it : { value: it },
           };
         });
 
@@ -130,7 +195,7 @@ Deno.serve(async (req) => {
 
         payload = items.map((it) => ({
           [key]: pickOldId(it),
-          raw: it,
+          raw: it && typeof it === "object" ? it : { value: it },
         }));
       }
 
@@ -139,12 +204,33 @@ Deno.serve(async (req) => {
         if (error) throw error;
       }
 
+      // record run + audit (success)
+      await service.from("migration_runs").insert({
+        started_by: adminUserId,
+        status: "import",
+        summary: { entity, count: items.length },
+        errors: [],
+      });
+
+      await insertAuditLog(service, {
+        admin_user_id: adminUserId!,
+        action: "import",
+        entity,
+        record_count: items.length,
+        success: true,
+        errors: [],
+      });
+
       return jsonResponse(200, {
         message: `Importado ${items.length} registros em ${table}.`,
       });
     }
 
+
+
     if (action === "clear") {
+      auditEntity = "staging";
+
       const tables = [
         "staging_profiles",
         "staging_properties",
@@ -158,6 +244,8 @@ Deno.serve(async (req) => {
         "task_id_map",
       ];
 
+      let deleted = 0;
+
       for (const table of tables) {
         while (true) {
           const { data: rows, error } = await service.from(table).select("id").limit(1000);
@@ -166,11 +254,29 @@ Deno.serve(async (req) => {
           const ids = rows.map((r: any) => r.id);
           const { error: delErr } = await service.from(table).delete().in("id", ids);
           if (delErr) throw delErr;
+          deleted += ids.length;
         }
       }
 
+      await service.from("migration_runs").insert({
+        started_by: adminUserId,
+        status: "clear",
+        summary: { deleted },
+        errors: [],
+      });
+
+      await insertAuditLog(service, {
+        admin_user_id: adminUserId!,
+        action: "clear",
+        entity: "staging",
+        record_count: deleted,
+        success: true,
+        errors: [],
+      });
+
       return jsonResponse(200, { message: "Staging e mapas limpos." });
     }
+
 
     if (action === "run") {
       const summary: any = {
@@ -400,12 +506,54 @@ Deno.serve(async (req) => {
         ? `Migração executada com avisos: ${summary.missingUsersByEmail.length} emails não existem no sistema atual.`
         : "Migração executada com sucesso.";
 
+
+      await service.from("migration_runs").insert({
+        started_by: adminUserId,
+        status: "run",
+        summary,
+        errors: summary.errors,
+      });
+
+      await insertAuditLog(service, {
+        admin_user_id: adminUserId!,
+        action: "run",
+        entity: null,
+        record_count:
+          (summary?.inserted?.properties || 0) +
+          (summary?.inserted?.leads || 0) +
+          (summary?.inserted?.tasks || 0) +
+          (summary?.inserted?.visits || 0),
+        success: (summary?.errors || []).length === 0,
+        errors: summary.errors || [],
+      });
+
       return jsonResponse(200, { summary });
     }
 
     return jsonResponse(400, { error: "Unknown action" });
   } catch (e: any) {
     console.error("migration-manager error:", e);
+
+    // Best-effort audit logging on failure
+    if (service && adminUserId && auditAction) {
+      await insertAuditLog(service, {
+        admin_user_id: adminUserId,
+        action: auditAction,
+        entity: auditEntity,
+        record_count: auditRecordCount,
+        success: false,
+        errors: [{ error: e?.message || String(e) }],
+      });
+
+      await service.from("migration_runs").insert({
+        started_by: adminUserId,
+        status: `error:${auditAction}`,
+        summary: { entity: auditEntity, record_count: auditRecordCount },
+        errors: [{ error: e?.message || String(e) }],
+      });
+    }
+
     return jsonResponse(500, { error: e?.message || "Internal error" });
   }
 });
+
