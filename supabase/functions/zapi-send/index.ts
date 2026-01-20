@@ -43,7 +43,8 @@ Deno.serve(async (req) => {
 
     const { action, phone, message, imageUrl, audioUrl, caption } = await req.json();
 
-    console.log(`[Z-API Send] Action: ${action}, Phone: ${phone}, User: ${claimsData.claims.sub}`);
+    // log minimal context only
+    console.log(`[Z-API Send] action=${action} user=${claimsData.claims.sub}`);
 
     let endpoint = '';
     let body: any = {};
@@ -104,7 +105,6 @@ Deno.serve(async (req) => {
     });
 
     const data = await response.json();
-    console.log(`[Z-API Send] Response:`, data);
 
     return new Response(
       JSON.stringify(data),

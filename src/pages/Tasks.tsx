@@ -49,7 +49,6 @@ const Tasks = () => {
       .order("due_date", { ascending: true, nullsFirst: false });
 
     if (error) {
-      console.error("Error loading tasks:", error);
       toast({ title: "Erro ao carregar tarefas", variant: "destructive" });
     } else {
       setTasks(data || []);

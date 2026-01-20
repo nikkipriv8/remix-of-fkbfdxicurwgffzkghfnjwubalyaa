@@ -103,7 +103,6 @@ export default function TaskFormDialog({ open, onOpenChange, task, onSuccess }: 
       onOpenChange(false);
       form.reset();
     } catch (error) {
-      console.error("Error saving task:", error);
       toast({
         title: "Erro ao salvar tarefa",
         description: "Tente novamente.",

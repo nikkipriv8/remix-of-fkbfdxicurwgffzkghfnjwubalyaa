@@ -125,8 +125,7 @@ export default function UserManagement() {
       }));
 
       setUsers(usersWithRoles);
-    } catch (error: any) {
-      console.error("Error loading users:", error);
+    } catch {
       toast.error("Erro ao carregar usuários");
     } finally {
       setIsLoading(false);
@@ -178,8 +177,7 @@ export default function UserManagement() {
       setIsEditDialogOpen(false);
       loadUsers();
     } catch (error: any) {
-      console.error("Error updating user:", error);
-      toast.error("Erro ao atualizar usuário: " + error.message);
+      toast.error("Erro ao atualizar usuário: " + (error?.message || "Tente novamente"));
     } finally {
       setIsSaving(false);
     }
@@ -198,8 +196,7 @@ export default function UserManagement() {
         user.is_active ? "Usuário desativado" : "Usuário ativado"
       );
       loadUsers();
-    } catch (error: any) {
-      console.error("Error toggling user status:", error);
+    } catch {
       toast.error("Erro ao alterar status do usuário");
     }
   };

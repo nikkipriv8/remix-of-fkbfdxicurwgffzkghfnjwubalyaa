@@ -165,7 +165,6 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
       onOpenChange(false);
       form.reset();
     } catch (error) {
-      console.error("Error saving property:", error);
       toast({
         title: "Erro ao salvar imóvel",
         description: "Tente novamente.",

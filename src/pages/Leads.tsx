@@ -38,7 +38,6 @@ const Leads = () => {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Error loading leads:", error);
       toast({ title: "Erro ao carregar leads", variant: "destructive" });
     } else {
       setLeads(data || []);

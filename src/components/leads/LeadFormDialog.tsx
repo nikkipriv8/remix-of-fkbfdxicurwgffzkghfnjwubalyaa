@@ -149,7 +149,6 @@ export default function LeadFormDialog({ open, onOpenChange, lead, onSuccess }: 
       onOpenChange(false);
       form.reset();
     } catch (error) {
-      console.error("Error saving lead:", error);
       toast({
         title: "Erro ao salvar lead",
         description: "Tente novamente.",

@@ -36,7 +36,6 @@ export function useRealtimeSubscription({
           filter,
         },
         (payload) => {
-          console.log(`[Realtime] INSERT on ${table}:`, payload);
           onInsert(payload.new);
         }
       );
@@ -52,7 +51,6 @@ export function useRealtimeSubscription({
           filter,
         },
         (payload) => {
-          console.log(`[Realtime] UPDATE on ${table}:`, payload);
           onUpdate(payload.new);
         }
       );
@@ -68,15 +66,12 @@ export function useRealtimeSubscription({
           filter,
         },
         (payload) => {
-          console.log(`[Realtime] DELETE on ${table}:`, payload);
           onDelete(payload.old);
         }
       );
     }
 
-    channel.subscribe((status) => {
-      console.log(`[Realtime] Subscription status for ${table}:`, status);
-    });
+    channel.subscribe();
 
     channelRef.current = channel;
 

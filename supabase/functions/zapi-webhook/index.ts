@@ -19,9 +19,9 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     const webhookType = url.searchParams.get('type') || 'message';
-    
+
     const payload = await req.json();
-    console.log(`[Z-API Webhook] Type: ${webhookType}`, JSON.stringify(payload, null, 2));
+    console.log(`[Z-API Webhook] received type=${webhookType}`);
 
     // Process based on webhook type
     switch (webhookType) {
@@ -35,13 +35,11 @@ Deno.serve(async (req) => {
         await handlePresence(payload);
         break;
       case 'connected':
-        console.log('[Z-API] Instance connected');
-        break;
       case 'disconnected':
-        console.log('[Z-API] Instance disconnected');
+        // noop (kept for future status tracking)
         break;
       default:
-        console.log(`[Z-API] Unknown webhook type: ${webhookType}`);
+        // noop
     }
 
     return new Response(
@@ -91,7 +89,8 @@ async function handleIncomingMessage(payload: any) {
     mediaUrl = document.documentUrl || document.url;
   }
 
-  console.log(`[Z-API] Processing message from ${cleanPhone}: ${messageContent?.substring(0, 50) || '[media]'}`);
+  // Minimal log only (no payload content)
+  console.log(`[Z-API] message received from ${cleanPhone}`);
 
   // Find or create conversation
   let { data: conversation, error: convError } = await supabase
@@ -223,37 +222,19 @@ async function handleMessageStatus(payload: any) {
   console.log(`[Z-API] Updated message ${messageId} status to ${status}`);
 }
 
-async function handlePresence(payload: any) {
-  console.log('[Z-API] Presence update:', payload);
-  // Can be used to track typing indicators, online status, etc.
+async function handlePresence(_payload: any) {
+  // intentionally no-op (presence can be very noisy)
 }
 
 async function triggerAIAgent(conversationId: string, message: string, phone: string) {
   try {
-    console.log(`[Z-API] Triggering AI agent for conversation ${conversationId}`);
-    
-    const response = await fetch(
-      `${supabaseUrl}/functions/v1/whatsapp-ai-agent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
-        },
-        body: JSON.stringify({
-          conversationId,
-          message,
-          phone,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[Z-API] AI agent error:', response.status, errorText);
-    } else {
-      console.log('[Z-API] AI agent triggered successfully');
-    }
+    await supabase.functions.invoke("whatsapp-ai-agent", {
+      body: {
+        conversationId,
+        message,
+        phone,
+      },
+    });
   } catch (error) {
     console.error('[Z-API] Error triggering AI agent:', error);
   }

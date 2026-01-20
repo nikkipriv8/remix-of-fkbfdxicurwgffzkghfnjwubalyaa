@@ -40,23 +40,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .select('*')
       .eq('user_id', userId)
       .single();
-    
+
     if (profileError) {
-      console.error('Error fetching profile:', profileError);
       return null;
     }
-    
+
     // Fetch role from user_roles table (secure source)
-    const { data: roleData, error: roleError } = await supabase
+    const { data: roleData } = await supabase
       .from('user_roles')
       .select('role')
       .eq('user_id', userId)
       .maybeSingle();
-    
-    if (roleError) {
-      console.error('Error fetching role:', roleError);
-    }
-    
+
     // Combine profile with role from secure table
     return {
       ...profileData,

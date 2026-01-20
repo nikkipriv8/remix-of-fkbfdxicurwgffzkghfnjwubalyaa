@@ -134,7 +134,6 @@ export default function VisitFormDialog({
       onOpenChange(false);
       form.reset();
     } catch (error) {
-      console.error("Error saving visit:", error);
       toast({
         title: "Erro ao salvar visita",
         description: "Tente novamente.",

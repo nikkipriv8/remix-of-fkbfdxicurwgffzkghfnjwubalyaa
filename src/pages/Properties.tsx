@@ -60,7 +60,6 @@ const Properties = () => {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Error loading properties:", error);
       toast({ title: "Erro ao carregar imóveis", variant: "destructive" });
     } else {
       setProperties(data || []);

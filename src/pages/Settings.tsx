@@ -65,7 +65,6 @@ const Settings = () => {
         refreshProfile();
       }
     } catch (error: any) {
-      console.error("Error saving profile:", error);
       toast({
         title: "Erro ao salvar",
         description: error.message,
@@ -77,7 +76,7 @@ const Settings = () => {
   };
 
   // Webhook URLs
-  const baseWebhookUrl = `https://svsmkepkdbkrgpogijgp.supabase.co/functions/v1/zapi-webhook`;
+  const baseWebhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/zapi-webhook`;
   const webhooks = [
     { id: 'send', label: 'Ao enviar', url: `${baseWebhookUrl}?type=send` },
     { id: 'receive', label: 'Ao receber', url: `${baseWebhookUrl}?type=message` },
@@ -101,8 +100,7 @@ const Settings = () => {
       } else {
         setZapiStatus('disconnected');
       }
-    } catch (error) {
-      console.error('Error checking Z-API status:', error);
+    } catch {
       setZapiStatus('disconnected');
     } finally {
       setIsCheckingStatus(false);

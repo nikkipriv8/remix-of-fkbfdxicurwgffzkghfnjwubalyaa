@@ -64,7 +64,6 @@ const Visits = () => {
       .order("scheduled_at", { ascending: true });
 
     if (error) {
-      console.error("Error loading visits:", error);
       toast({ title: "Erro ao carregar visitas", variant: "destructive" });
     } else {
       setVisits((data as Visit[]) || []);

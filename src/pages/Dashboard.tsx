@@ -175,8 +175,6 @@ export default function Dashboard() {
         activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
         setRecentActivities(activities.slice(0, 4));
 
-      } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
       } finally {
         setIsLoading(false);
       }

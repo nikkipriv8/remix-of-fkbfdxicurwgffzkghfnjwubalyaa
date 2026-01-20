@@ -47,7 +47,8 @@ Deno.serve(async (req) => {
   try {
     const { conversationId, message, phone } = await req.json();
 
-    console.log(`[AI Agent] Processing message for conversation ${conversationId}`);
+    // minimal log only
+    console.log(`[AI Agent] processing conversation=${conversationId}`);
 
     // Get conversation history for context
     const { data: messages, error: msgError } = await supabase
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
       conversationHistory.push({ role: "user", content: message });
     }
 
-    console.log(`[AI Agent] Sending ${conversationHistory.length} messages to AI`);
+    console.log(`[AI Agent] sending history_len=${conversationHistory.length}`);
 
     // Call Lovable AI Gateway
     const aiResponse = await fetch(AI_GATEWAY_URL, {
@@ -115,7 +116,7 @@ Deno.serve(async (req) => {
     const aiData = await aiResponse.json();
     const aiMessage = aiData.choices?.[0]?.message?.content || "";
 
-    console.log(`[AI Agent] AI Response: ${aiMessage.substring(0, 100)}...`);
+    // do not log message content
 
     // Send response via Z-API
     const ZAPI_INSTANCE_ID = Deno.env.get("ZAPI_INSTANCE_ID")!;
@@ -138,7 +139,6 @@ Deno.serve(async (req) => {
     );
 
     const zapiData = await zapiResponse.json();
-    console.log("[AI Agent] Z-API response:", zapiData);
 
     // Store the AI response in the database
     const { error: insertError } = await supabase
