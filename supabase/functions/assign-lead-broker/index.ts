@@ -28,7 +28,10 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("Authorization") ?? "";
-    if (!authHeader) return json(401, { error: "Unauthorized" });
+    if (!authHeader?.startsWith("Bearer ")) {
+      console.warn("[assign-lead-broker] missing bearer token");
+      return json(401, { error: "Unauthorized" });
+    }
 
     // Validate the caller token explicitly (verify_jwt=false)
     const authed = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -36,15 +39,19 @@ Deno.serve(async (req) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const { data: userRes, error: userErr } = await authed.auth.getUser();
-    const caller = userRes?.user;
-    if (userErr || !caller) return json(401, { error: "Unauthorized" });
+    const token = authHeader.replace("Bearer ", "");
+    const { data: claimsRes, error: claimsErr } = await authed.auth.getClaims(token);
+    const callerUserId = claimsRes?.claims?.sub;
+    if (claimsErr || !callerUserId) {
+      console.warn("[assign-lead-broker] invalid token", claimsErr);
+      return json(401, { error: "Unauthorized" });
+    }
 
     // Only staff can claim leads
     const { data: roleRow } = await service
       .from("user_roles")
       .select("role")
-      .eq("user_id", caller.id)
+      .eq("user_id", callerUserId)
       .in("role", ["admin", "broker", "attendant"])
       .maybeSingle();
     if (!roleRow) return json(403, { error: "Forbidden" });
@@ -56,7 +63,7 @@ Deno.serve(async (req) => {
     const { data: profileRow, error: profileErr } = await service
       .from("profiles")
       .select("id")
-      .eq("user_id", caller.id)
+      .eq("user_id", callerUserId)
       .maybeSingle();
     if (profileErr || !profileRow?.id) return json(400, { error: "Profile not found" });
 

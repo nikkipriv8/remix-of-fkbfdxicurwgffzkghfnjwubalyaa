@@ -147,7 +147,19 @@ export function useWhatsappController() {
 
   const assignLeadBrokerIfNeeded = async (leadId: string) => {
     try {
-      await supabase.functions.invoke("assign-lead-broker", { body: { leadId } });
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const token = sessionRes?.session?.access_token;
+      if (!token) return;
+
+      const { error } = await supabase.functions.invoke("assign-lead-broker", {
+        body: { leadId },
+      });
+
+      // Best-effort: ignore auth/permission failures (should never break UI)
+      if (error) {
+        // keep silent
+        return;
+      }
     } catch {
       // best-effort; if this fails, IA may not be able to create visits with broker_id
     }
