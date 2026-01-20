@@ -94,15 +94,19 @@ export function useWhatsappController() {
         return;
       }
 
-      const { error: apiError } = await supabase.functions.invoke("zapi-send", {
+      const { data: zapiData, error: apiError } = await supabase.functions.invoke("zapi-send", {
         body: {
           action: "send-text",
-          phone: selectedConversation.whatsapp_id,
+          // Z-API expects the phone number (E.164/DDD+number). `whatsapp_id` is an internal id.
+          phone: selectedConversation.phone,
           message: content,
         },
       });
 
       if (apiError) throw apiError;
+      if ((zapiData as any)?.error) {
+        throw new Error((zapiData as any).error);
+      }
 
       const insertedMsg = await insertOutboundMessage(selectedConversation.id, content);
 
