@@ -65,7 +65,12 @@ type ChatAreaProps = {
   isSending: boolean;
 };
 
-export default function ChatArea({
+// Wrapper to avoid hook-order issues during hot reloads by remounting the inner component.
+export default function ChatArea(props: ChatAreaProps) {
+  return <ChatAreaInner {...props} />;
+}
+
+function ChatAreaInner({
   messages,
   isLoading,
   contactName,
