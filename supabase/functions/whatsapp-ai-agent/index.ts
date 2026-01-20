@@ -158,6 +158,48 @@ async function resolvePropertyId(args: any): Promise<string | null> {
   return (data as any)?.id ?? null;
 }
 
+function escapeIlike(input: string) {
+  // Escape % and _ which are wildcards in LIKE/ILIKE
+  return input.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
+async function resolvePropertyIdByAddress(addressQueryRaw: string): Promise<string | null> {
+  const q = addressQueryRaw.trim();
+  if (!q) return null;
+
+  // Keep query short to avoid abuse and overly broad matches
+  const safe = escapeIlike(q.slice(0, 120));
+  const pattern = `%${safe}%`;
+
+  const { data, error } = await supabase
+    .from("properties")
+    .select(
+      "id, code, title, address_street, address_number, address_neighborhood, address_city, address_state"
+    )
+    .eq("status", "available")
+    .or(
+      [
+        `address_street.ilike.${pattern}`,
+        `address_neighborhood.ilike.${pattern}`,
+        `address_city.ilike.${pattern}`,
+        `title.ilike.${pattern}`,
+        `code.ilike.${pattern}`,
+      ].join(",")
+    )
+    .limit(3);
+
+  if (error) {
+    console.warn("[AI Agent] resolvePropertyIdByAddress error", error);
+    return null;
+  }
+
+  const rows = (data || []) as any[];
+  if (rows.length === 1) return rows[0]?.id ?? null;
+
+  // Multiple or none: ambiguous
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -342,6 +384,11 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                 type: "string",
                 description: "Código do imóvel (Código: ... do contexto de imóveis)",
               },
+              property_address: {
+                type: "string",
+                description:
+                  "Endereço do imóvel (rua, número, bairro e cidade). Use quando o cliente não souber o código.",
+              },
               scheduled_at_iso: {
                 type: "string",
                 description:
@@ -454,11 +501,19 @@ Abaixo estão até 5 imóveis disponíveis (dados reais). Use APENAS estes dados
                   "Esse horário parece estar no passado 😅 Pode me sugerir uma nova data e hora (ex: amanhã às 14:00)?";
               } else {
                 // Resolve property_id (prefer DB lookup; do not rely only on the 5-context list)
-                const propertyId = await resolvePropertyId(args);
+                let propertyId = await resolvePropertyId(args);
+
+                // If not found by id/code, try address search (best-effort)
+                if (!propertyId) {
+                  const addr = typeof args?.property_address === "string" ? args.property_address : "";
+                  if (addr.trim()) {
+                    propertyId = await resolvePropertyIdByAddress(addr);
+                  }
+                }
 
                 if (!propertyId) {
                   aiMessage =
-                    "Qual o *código do imóvel* que você quer visitar? Assim que você me disser (ex: 'código 123'), eu registro a visita.";
+                    "Consigo agendar sim — mas preciso identificar o imóvel certinho. Pode me enviar o *endereço completo* (rua, número, bairro e cidade)? Se souber, mande também o *código do imóvel*.";
                 } else {
                 const notes = typeof args?.notes === "string" ? args.notes.trim() : "";
                 const tz = String(args?.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
