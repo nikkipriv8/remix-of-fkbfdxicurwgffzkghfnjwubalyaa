@@ -134,6 +134,14 @@ export function useWhatsappController() {
     }
   };
 
+  const assignLeadBrokerIfNeeded = async (leadId: string) => {
+    try {
+      await supabase.functions.invoke("assign-lead-broker", { body: { leadId } });
+    } catch {
+      // best-effort; if this fails, IA may not be able to create visits with broker_id
+    }
+  };
+
   const sendMessage = async (content: string) => {
     if (!content.trim() || !selectedConversation) return;
 
@@ -310,6 +318,8 @@ export function useWhatsappController() {
           }
 
           if (leadId) {
+            // Assign this lead to the logged-in attendant/broker (best-effort)
+            await assignLeadBrokerIfNeeded(leadId);
             await loadLeadInfo(leadId);
           }
         } catch {
