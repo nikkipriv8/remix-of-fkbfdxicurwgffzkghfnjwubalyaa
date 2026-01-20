@@ -39,23 +39,59 @@ const formSchema = z.object({
   property_type: z.enum(["house", "apartment", "commercial", "land", "rural", "other"]),
   transaction_type: z.enum(["sale", "rent", "both"]),
   status: z.enum(["available", "reserved", "sold", "rented", "inactive"]),
-  address_street: z.string().optional(),
-  address_number: z.string().optional(),
-  address_neighborhood: z.string().min(1, "Bairro é obrigatório"),
-  address_city: z.string().min(1, "Cidade é obrigatória"),
-  address_state: z.string().default("SP"),
-  address_zipcode: z.string().optional(),
-  bedrooms: z.coerce.number().optional(),
-  bathrooms: z.coerce.number().optional(),
-  suites: z.coerce.number().optional(),
-  parking_spots: z.coerce.number().optional(),
-  area_total: z.coerce.number().optional(),
-  area_built: z.coerce.number().optional(),
-  sale_price: z.coerce.number().optional(),
-  rent_price: z.coerce.number().optional(),
-  condominium_fee: z.coerce.number().optional(),
-  iptu: z.coerce.number().optional(),
-  description: z.string().optional(),
+
+  // Address (required)
+  address_street: z.string().trim().min(1, "Rua é obrigatória"),
+  address_number: z.string().trim().min(1, "Número é obrigatório"),
+  address_neighborhood: z.string().trim().min(1, "Bairro é obrigatório"),
+  address_city: z.string().trim().min(1, "Cidade é obrigatória"),
+  address_state: z
+    .string()
+    .trim()
+    .min(2, "UF é obrigatória")
+    .max(2, "UF deve ter 2 letras")
+    .transform((v) => v.toUpperCase())
+    .default("SP"),
+  address_zipcode: z.string().trim().min(1, "CEP é obrigatório"),
+
+  // Specs (required where enforced by backend trigger)
+  bedrooms: z.coerce.number().int().min(0, "Quartos deve ser >= 0"),
+  bathrooms: z.coerce.number().int().min(0, "Banheiros deve ser >= 0"),
+  suites: z.coerce.number().int().min(0).optional(),
+  parking_spots: z.coerce.number().int().min(0).optional(),
+  area_total: z.coerce.number().positive("Área total deve ser > 0"),
+  area_built: z.coerce.number().min(0).optional(),
+
+  // Prices (required by backend trigger)
+  sale_price: z.coerce.number().positive("Preço de venda deve ser > 0"),
+  rent_price: z.coerce.number().positive("Preço de aluguel deve ser > 0"),
+  condominium_fee: z.coerce.number().min(0).optional(),
+  iptu: z.coerce.number().min(0).optional(),
+
+  description: z.string().trim().min(1, "Descrição é obrigatória"),
+
+  // Images
+  cover_image_url: z.string().trim().url("URL da capa inválida").min(1, "Capa é obrigatória"),
+  images_text: z
+    .string()
+    .trim()
+    .min(1, "Informe pelo menos 1 URL de foto")
+    .refine(
+      (txt) =>
+        txt
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .every((u) => {
+            try {
+              const parsed = new URL(u);
+              return parsed.protocol === "https:" || parsed.protocol === "http:";
+            } catch {
+              return false;
+            }
+          }),
+      "Uma ou mais URLs de fotos são inválidas"
+    ),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -102,23 +138,32 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
       property_type: property?.property_type || "apartment",
       transaction_type: property?.transaction_type || "sale",
       status: property?.status || "available",
+
       address_street: property?.address_street || "",
       address_number: property?.address_number || "",
       address_neighborhood: property?.address_neighborhood || "",
       address_city: property?.address_city || "",
       address_state: property?.address_state || "SP",
       address_zipcode: property?.address_zipcode || "",
-      bedrooms: property?.bedrooms || undefined,
-      bathrooms: property?.bathrooms || undefined,
-      suites: property?.suites || undefined,
-      parking_spots: property?.parking_spots || undefined,
-      area_total: property?.area_total || undefined,
-      area_built: property?.area_built || undefined,
-      sale_price: property?.sale_price || undefined,
-      rent_price: property?.rent_price || undefined,
-      condominium_fee: property?.condominium_fee || undefined,
-      iptu: property?.iptu || undefined,
+
+      bedrooms: property?.bedrooms ?? 0,
+      bathrooms: property?.bathrooms ?? 0,
+      suites: property?.suites ?? 0,
+      parking_spots: property?.parking_spots ?? 0,
+      area_total: (property?.area_total as any) ?? 1,
+      area_built: (property?.area_built as any) ?? 0,
+
+      sale_price: (property?.sale_price as any) ?? 1,
+      rent_price: (property?.rent_price as any) ?? 1,
+      condominium_fee: (property?.condominium_fee as any) ?? 0,
+      iptu: (property?.iptu as any) ?? 0,
+
       description: property?.description || "",
+
+      cover_image_url: property?.cover_image_url || "",
+      images_text: Array.isArray(property?.images)
+        ? (property?.images as any[]).filter(Boolean).join("\n")
+        : "",
     },
   });
 
@@ -126,29 +171,41 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
     setIsLoading(true);
 
     try {
+      const images = values.images_text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+
       const data = {
         title: values.title,
         code: values.code,
         property_type: values.property_type,
         transaction_type: values.transaction_type,
         status: values.status,
-        address_street: values.address_street || null,
-        address_number: values.address_number || null,
+
+        address_street: values.address_street,
+        address_number: values.address_number,
         address_neighborhood: values.address_neighborhood,
         address_city: values.address_city,
         address_state: values.address_state,
-        address_zipcode: values.address_zipcode || null,
-        bedrooms: values.bedrooms || null,
-        bathrooms: values.bathrooms || null,
-        suites: values.suites || null,
-        parking_spots: values.parking_spots || null,
-        area_total: values.area_total || null,
-        area_built: values.area_built || null,
-        sale_price: values.sale_price || null,
-        rent_price: values.rent_price || null,
-        condominium_fee: values.condominium_fee || null,
-        iptu: values.iptu || null,
-        description: values.description || null,
+        address_zipcode: values.address_zipcode,
+
+        bedrooms: values.bedrooms,
+        bathrooms: values.bathrooms,
+        suites: values.suites ?? 0,
+        parking_spots: values.parking_spots ?? 0,
+        area_total: values.area_total,
+        area_built: values.area_built ?? 0,
+
+        sale_price: values.sale_price,
+        rent_price: values.rent_price,
+        condominium_fee: values.condominium_fee ?? 0,
+        iptu: values.iptu ?? 0,
+
+        description: values.description,
+
+        cover_image_url: values.cover_image_url,
+        images: images as any,
       };
 
       if (property) {
@@ -164,10 +221,10 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
       onSuccess?.();
       onOpenChange(false);
       form.reset();
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Erro ao salvar imóvel",
-        description: "Tente novamente.",
+        description: error?.message || "Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -294,7 +351,7 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="address_street"
                 render={({ field }) => (
                   <FormItem className="col-span-2">
-                    <FormLabel>Rua</FormLabel>
+                    <FormLabel>Rua *</FormLabel>
                     <FormControl>
                       <Input placeholder="Rua das Flores" {...field} />
                     </FormControl>
@@ -308,7 +365,7 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="address_number"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Número</FormLabel>
+                    <FormLabel>Número *</FormLabel>
                     <FormControl>
                       <Input placeholder="123" {...field} />
                     </FormControl>
@@ -352,9 +409,9 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="address_state"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Estado</FormLabel>
+                    <FormLabel>UF *</FormLabel>
                     <FormControl>
-                      <Input placeholder="SP" {...field} />
+                      <Input placeholder="SP" maxLength={2} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -366,7 +423,7 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="address_zipcode"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>CEP</FormLabel>
+                    <FormLabel>CEP *</FormLabel>
                     <FormControl>
                       <Input placeholder="01234-567" {...field} />
                     </FormControl>
@@ -382,7 +439,7 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="bedrooms"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Quartos</FormLabel>
+                    <FormLabel>Quartos *</FormLabel>
                     <FormControl>
                       <Input type="number" min={0} {...field} />
                     </FormControl>
@@ -396,7 +453,7 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="bathrooms"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Banheiros</FormLabel>
+                    <FormLabel>Banheiros *</FormLabel>
                     <FormControl>
                       <Input type="number" min={0} {...field} />
                     </FormControl>
@@ -440,9 +497,9 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="area_total"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Área Total (m²)</FormLabel>
+                    <FormLabel>Área Total (m²) *</FormLabel>
                     <FormControl>
-                      <Input type="number" min={0} {...field} />
+                      <Input type="number" min={1} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -470,9 +527,9 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="sale_price"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Preço Venda (R$)</FormLabel>
+                    <FormLabel>Preço Venda (R$) *</FormLabel>
                     <FormControl>
-                      <Input type="number" min={0} {...field} />
+                      <Input type="number" min={1} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -484,9 +541,9 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
                 name="rent_price"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Preço Aluguel (R$)</FormLabel>
+                    <FormLabel>Preço Aluguel (R$) *</FormLabel>
                     <FormControl>
-                      <Input type="number" min={0} {...field} />
+                      <Input type="number" min={1} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -527,21 +584,55 @@ export default function PropertyFormDialog({ open, onOpenChange, property, onSuc
               name="description"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Descrição</FormLabel>
+                  <FormLabel>Descrição *</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="Descrição do imóvel..." {...field} />
+                    <Textarea
+                      rows={4}
+                      placeholder="Descreva o imóvel (diferenciais, proximidades, etc.)"
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
+            <div className="space-y-4">
+              <FormField
+                control={form.control}
+                name="cover_image_url"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>URL da Capa (imagem principal) *</FormLabel>
+                    <FormControl>
+                      <Input placeholder="https://..." {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="images_text"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>URLs das Fotos (1 por linha) *</FormLabel>
+                    <FormControl>
+                      <Textarea rows={4} placeholder={"https://...\nhttps://..."} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <div className="flex justify-end gap-2 pt-4">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={isLoading}>
-                {isLoading ? "Salvando..." : property ? "Atualizar" : "Criar Imóvel"}
+                {isLoading ? "Salvando..." : property ? "Salvar alterações" : "Criar imóvel"}
               </Button>
             </div>
           </form>
