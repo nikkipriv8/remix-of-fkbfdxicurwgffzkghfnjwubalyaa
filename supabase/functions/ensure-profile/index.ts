@@ -32,21 +32,27 @@ Deno.serve(async (req) => {
       return json(401, { error: "Not authenticated" });
     }
 
+    // In Lovable Cloud, gateway JWT verification may be disabled (verify_jwt=false),
+    // so we MUST validate the token explicitly via getUser(token).
+    // Use the service role client for stability, while still validating the caller's token.
+    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    // Keep an anon client available if needed for user-scoped operations.
     const authed = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
 
-    const { data: userRes, error: userErr } = await authed.auth.getUser(accessToken);
+    const { data: userRes, error: userErr } = await service.auth.getUser(accessToken);
     if (userErr) {
-      // Auth errors should not crash the app with 500
       return json(401, { error: userErr.message || "Not authenticated" });
     }
     const user = userRes?.user;
     if (!user) return json(401, { error: "Not authenticated" });
+
 
 
     const email = (user.email || "").toLowerCase();

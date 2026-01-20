@@ -34,14 +34,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-    // Ensure backend rows exist (profiles + user_roles) before fetching
-    try {
-      await supabase.functions.invoke('ensure-profile');
-    } catch {
-      // ignore; we'll still try to fetch below
-    }
+    // NOTE: profile + role are provisioned by backend trigger on signup.
+    // We avoid calling ensure-profile here to prevent auth race-condition crashes.
 
-    // Fetch profile data
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -75,21 +70,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Only synchronous state updates here
         setSession(session);
         setUser(session?.user ?? null);
-        
-        // Defer Supabase calls with setTimeout to prevent deadlock
+
         if (session?.user) {
           setTimeout(() => {
-            if (mounted) {
-              fetchProfile(session.user.id).then(profile => {
-                if (mounted) setProfile(profile);
-              });
-            }
+            if (!mounted) return;
+            fetchProfile(session.user.id).then((profile) => {
+              if (!mounted) return;
+              setProfile(profile);
+              setIsLoading(false);
+            });
           }, 0);
         } else {
           setProfile(null);
+          setIsLoading(false);
         }
       }
     );
+
 
     // THEN check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {

@@ -1,1 +1,4 @@
 project_id = "mynsmsjsfbbincekroqb"
+
+[functions.ensure-profile]
+verify_jwt = false
