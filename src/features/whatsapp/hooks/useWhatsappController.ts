@@ -215,6 +215,19 @@ export function useWhatsappController() {
     if (conv) {
       loadLeadInfo(conv.lead_id);
     }
+
+    // Mark as read (for unread counters)
+    (async () => {
+      try {
+        await supabase.rpc("mark_conversation_read", { _conversation_id: selectedConversationId });
+        setConversations((prev) =>
+          prev.map((c) => (c.id === selectedConversationId ? { ...c, unread_count: 0 } : c))
+        );
+      } catch {
+        // ignore
+      }
+    })();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversationId]);
 

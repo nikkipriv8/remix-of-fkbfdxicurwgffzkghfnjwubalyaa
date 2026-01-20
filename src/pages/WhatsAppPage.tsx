@@ -63,6 +63,7 @@ const WhatsAppPage = () => {
                 isLoading={isLoadingMessages}
                 contactName={selectedConversation?.lead_name || selectedConversation?.phone || ""}
                 contactPhone={selectedConversation?.phone || ""}
+                avatarUrl={selectedLead?.avatar_url ?? selectedConversation?.lead_avatar_url ?? null}
                 isActive={selectedConversation?.is_active || false}
                 automationEnabled={selectedConversation?.automation_enabled ?? true}
                 onToggleAutomation={toggleAutomation}

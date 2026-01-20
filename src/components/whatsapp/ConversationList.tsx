@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
@@ -22,6 +22,7 @@ type Conversation = {
   whatsapp_id: string;
   lead_id: string | null;
   lead_name?: string;
+  lead_avatar_url?: string | null;
   last_message_at: string | null;
   last_message?: string | null;
   is_active: boolean;
@@ -171,6 +172,9 @@ export default function ConversationList({
                 {/* Avatar */}
                 <div className="relative">
                   <Avatar className="h-12 w-12">
+                    {c.lead_avatar_url ? (
+                      <AvatarImage src={c.lead_avatar_url} alt={c.lead_name || c.phone} />
+                    ) : null}
                     <AvatarFallback className="bg-primary/10 text-primary text-sm">
                       {c.lead_name ? getInitials(c.lead_name) : c.phone.slice(-2)}
                     </AvatarFallback>
@@ -202,7 +206,7 @@ export default function ConversationList({
                       )}
                     </p>
                     {c.unread_count && c.unread_count > 0 && (
-                      <Badge className="h-5 min-w-5 flex items-center justify-center p-0 text-xs bg-primary">
+                      <Badge className="h-5 min-w-5 flex items-center justify-center p-0 text-xs bg-primary text-primary-foreground">
                         {c.unread_count}
                       </Badge>
                     )}

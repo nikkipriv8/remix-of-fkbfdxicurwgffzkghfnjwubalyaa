@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Select,
   SelectContent,
@@ -45,6 +45,7 @@ type Lead = {
   min_budget: number | null;
   max_budget: number | null;
   preferred_neighborhoods: string[] | null;
+  avatar_url?: string | null;
   created_at: string;
 };
 
@@ -183,6 +184,9 @@ export default function ContactInfoPanel({
           {/* Avatar e Nome */}
           <div className="flex flex-col items-center text-center">
             <Avatar className="h-20 w-20 mb-3">
+              {lead?.avatar_url ? (
+                <AvatarImage src={lead.avatar_url} alt={lead.name} />
+              ) : null}
               <AvatarFallback className="text-xl bg-primary/10 text-primary">
                 {lead ? getInitials(lead.name) : phone.slice(-2)}
               </AvatarFallback>
