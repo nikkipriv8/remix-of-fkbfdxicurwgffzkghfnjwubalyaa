@@ -15,7 +15,24 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 function requireWebhookToken(req: Request) {
-  const clientToken = req.headers.get("Client-Token");
+  // Z-API can send this token using different header casing/names depending on configuration.
+  // Headers are case-insensitive, but we still try common variants + query param fallback.
+  const url = new URL(req.url);
+
+  const headerToken =
+    req.headers.get("Client-Token") ||
+    req.headers.get("client-token") ||
+    req.headers.get("Client-token") ||
+    req.headers.get("X-Client-Token") ||
+    req.headers.get("x-client-token");
+
+  const queryToken =
+    url.searchParams.get("client-token") ||
+    url.searchParams.get("client_token") ||
+    url.searchParams.get("clientToken") ||
+    url.searchParams.get("token");
+
+  const provided = headerToken || queryToken;
   const expected = Deno.env.get("ZAPI_SECURITY_TOKEN");
 
   // If expected token is not configured, fail closed.
@@ -24,7 +41,14 @@ function requireWebhookToken(req: Request) {
     return false;
   }
 
-  return Boolean(clientToken && clientToken === expected);
+  const ok = Boolean(provided && provided === expected);
+  if (!ok) {
+    console.warn(
+      `[Z-API Webhook] Invalid token (provided=${provided ? "yes" : "no"}, header=${headerToken ? "yes" : "no"}, query=${queryToken ? "yes" : "no"})`
+    );
+  }
+
+  return ok;
 }
 
 // Initialize Supabase client
