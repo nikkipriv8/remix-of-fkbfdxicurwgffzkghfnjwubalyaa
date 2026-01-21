@@ -749,7 +749,7 @@ Deno.serve(async (req) => {
     // Get conversation history for context
     const { data: messages, error: msgError } = await supabase
       .from("whatsapp_messages")
-      .select("content, direction, created_at")
+      .select("content, transcription, direction, created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
       .limit(20);
@@ -763,7 +763,7 @@ Deno.serve(async (req) => {
     const conversationHistory =
       messages?.map((msg) => ({
         role: msg.direction === "inbound" ? "user" : "assistant",
-        content: msg.content || "",
+        content: (msg as any)?.content || (msg as any)?.transcription || "",
       })) || [];
 
     // If the current message isn't in history yet, add it

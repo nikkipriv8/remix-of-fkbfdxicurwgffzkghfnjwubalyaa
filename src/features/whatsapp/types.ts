@@ -22,6 +22,9 @@ export type Message = {
   media_url: string | null;
   created_at: string;
   ai_processed: boolean;
+  transcription?: string | null;
+  transcription_status?: string | null;
+  transcription_error?: string | null;
 };
 
 export type Lead = {

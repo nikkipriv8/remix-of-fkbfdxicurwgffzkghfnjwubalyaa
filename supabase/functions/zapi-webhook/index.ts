@@ -228,19 +228,75 @@ async function handleIncomingMessage(payload: any) {
   }
 
   // Store the message
-  const { error: msgError } = await supabase.from("whatsapp_messages").insert({
-    conversation_id: conversation.id,
-    message_id: safeMessageId,
-    content: messageContent,
-    direction: fromMe ? "outbound" : "inbound",
-    media_type: mediaType,
-    media_url: mediaUrl,
-    status: "received",
-  });
+  const direction = fromMe ? "outbound" : "inbound";
+  const isInboundAudio = direction === "inbound" && mediaType === "audio" && Boolean(mediaUrl);
+
+  const { data: insertedMsg, error: msgError } = await supabase
+    .from("whatsapp_messages")
+    .insert({
+      conversation_id: conversation.id,
+      message_id: safeMessageId,
+      content: messageContent,
+      direction,
+      media_type: mediaType,
+      media_url: mediaUrl,
+      status: "received",
+      transcription_status: isInboundAudio ? "pending" : null,
+    } as any)
+    .select("id")
+    .single();
 
   if (msgError) {
     console.error("[Z-API] Error storing message:", msgError);
     throw msgError;
+  }
+
+  // If this is an inbound audio message, transcribe it and store on the message row.
+  // Then (best-effort) trigger the AI agent using the transcription as the user message.
+  let transcriptionText: string | null = null;
+  if (isInboundAudio && insertedMsg?.id) {
+    try {
+      const { data: tData, error: tErr } = await supabase.functions.invoke(
+        "elevenlabs-transcribe",
+        {
+          body: {
+            audioUrl: mediaUrl,
+            languageCode: "por",
+          },
+        }
+      );
+
+      if (tErr) {
+        console.warn("[Z-API] transcription invoke error", tErr);
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            transcription_status: "error",
+            transcription_error: String((tErr as any)?.message || "transcription_failed").slice(0, 500),
+          } as any)
+          .eq("id", insertedMsg.id);
+      } else {
+        const t = typeof (tData as any)?.text === "string" ? (tData as any).text.trim() : "";
+        transcriptionText = t || null;
+        await supabase
+          .from("whatsapp_messages")
+          .update({
+            transcription: transcriptionText,
+            transcription_status: transcriptionText ? "done" : "error",
+            transcription_error: transcriptionText ? null : "empty_transcription",
+          } as any)
+          .eq("id", insertedMsg.id);
+      }
+    } catch (e) {
+      console.warn("[Z-API] transcription best-effort failed", e);
+      await supabase
+        .from("whatsapp_messages")
+        .update({
+          transcription_status: "error",
+          transcription_error: "transcription_exception",
+        } as any)
+        .eq("id", insertedMsg.id);
+    }
   }
 
   // Update last_message_at
@@ -284,7 +340,12 @@ async function handleIncomingMessage(payload: any) {
 
     // Only trigger AI agent if automation is enabled for this conversation
     if (conversation.automation_enabled !== false) {
-      triggerAIAgent(conversation.id, messageContent, cleanPhone);
+      const aiInput = transcriptionText || messageContent;
+      if (aiInput) {
+        triggerAIAgent(conversation.id, aiInput, cleanPhone);
+      } else {
+        console.log("[Z-API] No text/transcription available, skipping AI agent");
+      }
     } else {
       console.log("[Z-API] Automation disabled for this conversation, skipping AI agent");
     }

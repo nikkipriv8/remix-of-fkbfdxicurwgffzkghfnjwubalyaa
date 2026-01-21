@@ -48,6 +48,9 @@ type Message = {
   created_at: string;
   ai_processed: boolean;
   status?: string;
+  transcription?: string | null;
+  transcription_status?: string | null;
+  transcription_error?: string | null;
 };
 
 type ChatAreaProps = {
@@ -461,11 +464,36 @@ function ChatAreaInner({
                                   className="rounded-md max-h-64 object-contain cursor-pointer hover:opacity-90 transition-opacity"
                                 />
                               ) : m.media_type === "audio" ? (
-                                <audio
-                                  controls
-                                  className="max-w-full"
-                                  src={m.media_url}
-                                />
+                                <div className="space-y-2">
+                                  <audio
+                                    controls
+                                    className="max-w-full"
+                                    src={m.media_url}
+                                  />
+
+                                  {m.transcription_status === "pending" && (
+                                    <p className="text-xs text-muted-foreground">
+                                      Transcrevendo áudio…
+                                    </p>
+                                  )}
+
+                                  {m.transcription && (
+                                    <div className="rounded-md bg-muted/40 px-3 py-2">
+                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                                        Transcrição
+                                      </p>
+                                      <p className="text-xs whitespace-pre-wrap break-words">
+                                        {m.transcription}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {m.transcription_status === "error" && !m.transcription && (
+                                    <p className="text-xs text-muted-foreground">
+                                      Não foi possível transcrever este áudio.
+                                    </p>
+                                  )}
+                                </div>
                               ) : (
                                 <a
                                   href={m.media_url}

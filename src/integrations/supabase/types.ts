@@ -856,6 +856,9 @@ export type Database = {
           media_url: string | null
           message_id: string | null
           status: string | null
+          transcription: string | null
+          transcription_error: string | null
+          transcription_status: string | null
         }
         Insert: {
           ai_processed?: boolean
@@ -869,6 +872,9 @@ export type Database = {
           media_url?: string | null
           message_id?: string | null
           status?: string | null
+          transcription?: string | null
+          transcription_error?: string | null
+          transcription_status?: string | null
         }
         Update: {
           ai_processed?: boolean
@@ -882,6 +888,9 @@ export type Database = {
           media_url?: string | null
           message_id?: string | null
           status?: string | null
+          transcription?: string | null
+          transcription_error?: string | null
+          transcription_status?: string | null
         }
         Relationships: [
           {

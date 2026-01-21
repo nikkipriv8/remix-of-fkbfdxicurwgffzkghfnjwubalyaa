@@ -73,7 +73,9 @@ export async function fetchConversations() {
 export async function fetchMessages(conversationId: string) {
   const { data, error } = await supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, content, direction, media_type, media_url, created_at, ai_processed")
+    .select(
+      "id, conversation_id, content, direction, media_type, media_url, created_at, ai_processed, transcription, transcription_status, transcription_error"
+    )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(500);
