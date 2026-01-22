@@ -1,12 +1,20 @@
 import { Bot, Sparkles } from "lucide-react";
 import Header from "@/components/layout/Header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import ConversationList from "@/components/whatsapp/ConversationList";
 import ChatArea from "@/components/whatsapp/ChatArea";
 import ContactInfoPanel from "@/components/whatsapp/ContactInfoPanel";
 import { useWhatsappController } from "@/features/whatsapp/hooks/useWhatsappController";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { useWhatsappLayoutPrefs } from "@/features/whatsapp/hooks/useWhatsappLayoutPrefs";
 
 const WhatsAppPage = () => {
+  const { prefs, updateSizes, reset } = useWhatsappLayoutPrefs();
   const {
     conversations,
     selectedConversationId,
@@ -29,36 +37,54 @@ const WhatsAppPage = () => {
   return (
     <div className="flex-1 flex flex-col h-screen">
       <Header title="WhatsApp" subtitle="Atendimento com IA integrada">
-        <Badge variant="outline" className="gap-1.5 bg-primary/10 text-primary border-primary/20">
-          <Sparkles className="h-3 w-3" />
-          Sofia IA Ativa
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={reset}>
+            Resetar layout
+          </Button>
+          <Badge variant="outline" className="gap-1.5 bg-primary/10 text-primary border-primary/20">
+            <Sparkles className="h-3 w-3" />
+            Sofia IA Ativa
+          </Badge>
+        </div>
       </Header>
 
-      <main className="flex-1 flex overflow-hidden">
-        {/* Conversation List */}
-        <div className="w-80 shrink-0 hidden md:block">
-          <ConversationList
-            conversations={conversations}
-            selectedId={selectedConversationId}
-            isLoading={isLoadingConversations}
-            onSelect={setSelectedConversationId}
-            onRefresh={loadConversations}
-          />
-        </div>
+      <main className="flex-1 overflow-hidden">
+        {/* Desktop (redimensionável) */}
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="hidden md:flex h-full"
+          onLayout={(sizes) => {
+            // When contact panel is closed, sizes is [left, chat]. When open, [left, chat, right].
+            const left = sizes?.[0];
+            const right = sizes?.length === 3 ? sizes?.[2] : undefined;
+            updateSizes({
+              leftSize: typeof left === "number" ? left : undefined,
+              rightSize: typeof right === "number" ? right : undefined,
+            });
+          }}
+        >
+          <ResizablePanel defaultSize={prefs.leftSize} minSize={18} maxSize={55}>
+            <ConversationList
+              conversations={conversations}
+              selectedId={selectedConversationId}
+              isLoading={isLoadingConversations}
+              onSelect={setSelectedConversationId}
+              onRefresh={loadConversations}
+            />
+          </ResizablePanel>
 
-        {/* Chat Area */}
-        <div className="flex-1 flex">
-          {!selectedConversationId ? (
-            <div className="flex-1 flex flex-col items-center justify-center bg-muted/30">
-              <Bot className="h-20 w-20 text-muted-foreground/30 mb-4" />
-              <h3 className="text-lg font-medium text-muted-foreground">Selecione uma conversa</h3>
-              <p className="text-sm text-muted-foreground/70 mt-1">
-                Escolha uma conversa à esquerda para começar
-              </p>
-            </div>
-          ) : (
-            <div className="flex-1">
+          <ResizableHandle withHandle />
+
+          <ResizablePanel minSize={35}>
+            {!selectedConversationId ? (
+              <div className="flex h-full flex-col items-center justify-center bg-muted/30">
+                <Bot className="h-20 w-20 text-muted-foreground/30 mb-4" />
+                <h3 className="text-lg font-medium text-muted-foreground">Selecione uma conversa</h3>
+                <p className="text-sm text-muted-foreground/70 mt-1">
+                  Escolha uma conversa à esquerda para começar
+                </p>
+              </div>
+            ) : (
               <ChatArea
                 messages={messages}
                 isLoading={isLoadingMessages}
@@ -72,24 +98,55 @@ const WhatsAppPage = () => {
                 onOpenContactInfo={() => setShowContactInfo(true)}
                 isSending={isSending}
               />
-            </div>
-          )}
+            )}
+          </ResizablePanel>
 
-          {/* Contact Info Panel */}
           {showContactInfo && selectedConversation && (
-            <ContactInfoPanel
-              lead={selectedLead}
-              phone={selectedConversation.phone}
-              whatsappId={selectedConversation.whatsapp_id}
-              conversationId={selectedConversation.id}
-              onClose={() => setShowContactInfo(false)}
-              onRemoveContact={() => removeContact(selectedConversation.id)}
-              onLeadUpdated={() => {
-                loadConversations();
-                if (selectedConversation.lead_id) {
-                  loadLeadInfo(selectedConversation.lead_id);
-                }
-              }}
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize={prefs.rightSize} minSize={18} maxSize={55}>
+                <ContactInfoPanel
+                  lead={selectedLead}
+                  phone={selectedConversation.phone}
+                  whatsappId={selectedConversation.whatsapp_id}
+                  conversationId={selectedConversation.id}
+                  onClose={() => setShowContactInfo(false)}
+                  onRemoveContact={() => removeContact(selectedConversation.id)}
+                  onLeadUpdated={() => {
+                    loadConversations();
+                    if (selectedConversation.lead_id) {
+                      loadLeadInfo(selectedConversation.lead_id);
+                    }
+                  }}
+                />
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
+
+        {/* Mobile (mantém comportamento atual) */}
+        <div className="flex h-full md:hidden">
+          {!selectedConversationId ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-muted/30">
+              <Bot className="h-20 w-20 text-muted-foreground/30 mb-4" />
+              <h3 className="text-lg font-medium text-muted-foreground">Selecione uma conversa</h3>
+              <p className="text-sm text-muted-foreground/70 mt-1">
+                Abra no desktop para ajustar larguras e gerenciar conversas
+              </p>
+            </div>
+          ) : (
+            <ChatArea
+              messages={messages}
+              isLoading={isLoadingMessages}
+              contactName={selectedConversation?.lead_name || selectedConversation?.phone || ""}
+              contactPhone={selectedConversation?.phone || ""}
+              avatarUrl={selectedLead?.avatar_url ?? selectedConversation?.lead_avatar_url ?? null}
+              isActive={selectedConversation?.is_active || false}
+              automationEnabled={selectedConversation?.automation_enabled ?? true}
+              onToggleAutomation={toggleAutomation}
+              onSendMessage={sendMessage}
+              onOpenContactInfo={() => setShowContactInfo(true)}
+              isSending={isSending}
             />
           )}
         </div>
