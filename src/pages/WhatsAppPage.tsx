@@ -6,15 +6,18 @@ import ConversationList from "@/components/whatsapp/ConversationList";
 import ChatArea from "@/components/whatsapp/ChatArea";
 import ContactInfoPanel from "@/components/whatsapp/ContactInfoPanel";
 import { useWhatsappController } from "@/features/whatsapp/hooks/useWhatsappController";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useWhatsappLayoutPrefs } from "@/features/whatsapp/hooks/useWhatsappLayoutPrefs";
+import { useEffect, useState } from "react";
 
 const WhatsAppPage = () => {
   const { prefs, updateSizes, reset } = useWhatsappLayoutPrefs();
+  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const {
     conversations,
     selectedConversationId,
@@ -34,10 +37,23 @@ const WhatsAppPage = () => {
     removeContact,
   } = useWhatsappController();
 
+  // When selecting a conversation on mobile, close the conversations drawer.
+  useEffect(() => {
+    if (selectedConversationId) setMobileConversationsOpen(false);
+  }, [selectedConversationId]);
+
   return (
     <div className="flex-1 flex flex-col h-screen">
       <Header title="WhatsApp" subtitle="Atendimento com IA integrada">
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="md:hidden"
+            onClick={() => setMobileConversationsOpen(true)}
+          >
+            Conversas
+          </Button>
           <Button variant="outline" size="sm" onClick={reset}>
             Resetar layout
           </Button>
@@ -126,12 +142,50 @@ const WhatsAppPage = () => {
 
         {/* Mobile (mantém comportamento atual) */}
         <div className="flex h-full md:hidden">
+          {/* Conversations Drawer */}
+          <Sheet open={mobileConversationsOpen} onOpenChange={setMobileConversationsOpen}>
+            <SheetContent side="left" className="p-0">
+              <ConversationList
+                conversations={conversations}
+                selectedId={selectedConversationId}
+                isLoading={isLoadingConversations}
+                onSelect={(id) => {
+                  setSelectedConversationId(id);
+                  setMobileConversationsOpen(false);
+                }}
+                onRefresh={loadConversations}
+              />
+            </SheetContent>
+          </Sheet>
+
+          {/* Contact Info Drawer (mobile) */}
+          <Sheet open={showContactInfo} onOpenChange={setShowContactInfo}>
+            <SheetContent side="right" className="p-0">
+              {selectedConversation && (
+                <ContactInfoPanel
+                  lead={selectedLead}
+                  phone={selectedConversation.phone}
+                  whatsappId={selectedConversation.whatsapp_id}
+                  conversationId={selectedConversation.id}
+                  onClose={() => setShowContactInfo(false)}
+                  onRemoveContact={() => removeContact(selectedConversation.id)}
+                  onLeadUpdated={() => {
+                    loadConversations();
+                    if (selectedConversation.lead_id) {
+                      loadLeadInfo(selectedConversation.lead_id);
+                    }
+                  }}
+                />
+              )}
+            </SheetContent>
+          </Sheet>
+
           {!selectedConversationId ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-muted/30">
               <Bot className="h-20 w-20 text-muted-foreground/30 mb-4" />
               <h3 className="text-lg font-medium text-muted-foreground">Selecione uma conversa</h3>
               <p className="text-sm text-muted-foreground/70 mt-1">
-                Abra no desktop para ajustar larguras e gerenciar conversas
+                Toque em “Conversas” para escolher um contato
               </p>
             </div>
           ) : (
