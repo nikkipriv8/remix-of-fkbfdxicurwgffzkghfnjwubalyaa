@@ -13,11 +13,12 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useWhatsappLayoutPrefs } from "@/features/whatsapp/hooks/useWhatsappLayoutPrefs";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const WhatsAppPage = () => {
   const { prefs, updateSizes, reset } = useWhatsappLayoutPrefs();
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  const didInitMobileRef = useRef(false);
   const {
     conversations,
     selectedConversationId,
@@ -42,6 +43,13 @@ const WhatsAppPage = () => {
     if (selectedConversationId) setMobileConversationsOpen(false);
   }, [selectedConversationId]);
 
+  // Mobile: if there is no selected conversation, open the conversations drawer once.
+  useEffect(() => {
+    if (didInitMobileRef.current) return;
+    didInitMobileRef.current = true;
+    if (!selectedConversationId) setMobileConversationsOpen(true);
+  }, [selectedConversationId]);
+
   return (
     <div className="flex-1 flex flex-col h-screen">
       <Header title="WhatsApp" subtitle="Atendimento com IA integrada">
@@ -54,13 +62,15 @@ const WhatsAppPage = () => {
           >
             Conversas
           </Button>
-          <Button variant="outline" size="sm" onClick={reset}>
-            Resetar layout
-          </Button>
-          <Badge variant="outline" className="gap-1.5 bg-primary/10 text-primary border-primary/20">
-            <Sparkles className="h-3 w-3" />
-            Sofia IA Ativa
-          </Badge>
+          <div className="hidden md:flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={reset}>
+              Resetar layout
+            </Button>
+            <Badge variant="outline" className="gap-1.5 bg-primary/10 text-primary border-primary/20">
+              <Sparkles className="h-3 w-3" />
+              Sofia IA Ativa
+            </Badge>
+          </div>
         </div>
       </Header>
 
